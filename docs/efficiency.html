@@ -1,0 +1,561 @@
+<title>nowhereman — what caching changes</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f6f3;
+    --surface: #ffffff;
+    --surface-2: #edf1ec;
+    --border: rgba(10, 22, 16, 0.12);
+    --border-soft: rgba(10, 22, 16, 0.07);
+    --text: #10201a;
+    --text-dim: #46564d;
+    --text-mute: #6f8079;
+    --accent: #b96f13;
+    --accent-soft: rgba(185, 111, 19, 0.14);
+    --accent-2: #12836c;
+    --danger: #b6432b;
+    --danger-soft: rgba(182, 67, 43, 0.12);
+    --gray-mark: #c7cfc9;
+    --gray-mark-text: #7c8a83;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0f1613;
+      --surface: #161f1b;
+      --surface-2: #1c2622;
+      --border: rgba(238, 242, 238, 0.12);
+      --border-soft: rgba(238, 242, 238, 0.07);
+      --text: #eef2ee;
+      --text-dim: #aebcb4;
+      --text-mute: #7c8a83;
+      --accent: #e8a33d;
+      --accent-soft: rgba(232, 163, 61, 0.16);
+      --accent-2: #56cbb0;
+      --danger: #e08469;
+      --danger-soft: rgba(224, 132, 105, 0.14);
+      --gray-mark: #3a453f;
+      --gray-mark-text: #7c8a83;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f1613;
+    --surface: #161f1b;
+    --surface-2: #1c2622;
+    --border: rgba(238, 242, 238, 0.12);
+    --border-soft: rgba(238, 242, 238, 0.07);
+    --text: #eef2ee;
+    --text-dim: #aebcb4;
+    --text-mute: #7c8a83;
+    --accent: #e8a33d;
+    --accent-soft: rgba(232, 163, 61, 0.16);
+    --accent-2: #56cbb0;
+    --danger: #e08469;
+    --danger-soft: rgba(224, 132, 105, 0.14);
+    --gray-mark: #3a453f;
+    --gray-mark-text: #7c8a83;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+  }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 56px 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  header.hero {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+
+  .eyebrow {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  h1 {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    font-size: clamp(28px, 4vw, 36px);
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+  }
+
+  .hero p {
+    margin: 0;
+    max-width: 62ch;
+    color: var(--text-dim);
+    font-size: 16px;
+  }
+
+  section {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .section-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  h2 {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    font-size: 20px;
+    margin: 0;
+    letter-spacing: -0.005em;
+  }
+
+  .section-head p {
+    margin: 0;
+    color: var(--text-dim);
+    font-size: 14.5px;
+    max-width: 68ch;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+  }
+
+  /* --- architecture diagram --- */
+
+  .diagram-card svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    color: var(--text);
+  }
+
+  .diagram-card figcaption {
+    margin-top: 14px;
+    font-size: 13.5px;
+    color: var(--text-dim);
+  }
+
+  figure { margin: 0; }
+
+  .lane-tag {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+  }
+
+  /* --- KPI row --- */
+
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+
+  .kpi-tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 18px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .kpi-label {
+    font-size: 12px;
+    color: var(--text-mute);
+    letter-spacing: 0.02em;
+  }
+
+  .kpi-value {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    font-size: 28px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  .kpi-value.accent { color: var(--accent); }
+  .kpi-value.accent2 { color: var(--accent-2); }
+
+  .kpi-note {
+    font-size: 12.5px;
+    color: var(--text-mute);
+  }
+
+  .kpi-caveat {
+    font-size: 13.5px;
+    color: var(--text-dim);
+    padding: 2px 2px 0;
+  }
+
+  .kpi-caveat b { color: var(--text); font-weight: 600; }
+
+  /* --- bar chart --- */
+
+  .viz-root {
+    --chart-surface: var(--surface);
+    --chart-ink: var(--text);
+    --chart-ink-dim: var(--text-dim);
+    --chart-ink-mute: var(--text-mute);
+    --chart-grid: var(--border-soft);
+    --chart-emphasis: var(--accent);
+    --chart-context: var(--gray-mark);
+  }
+
+  .bars {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .bar-row {
+    display: grid;
+    grid-template-columns: 132px 1fr 92px;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .bar-name {
+    font-size: 13.5px;
+    color: var(--chart-ink);
+    text-align: right;
+  }
+
+  .bar-row.emphasis .bar-name {
+    color: var(--chart-emphasis);
+    font-weight: 700;
+  }
+
+  .bar-track {
+    position: relative;
+    height: 14px;
+    background: var(--chart-grid);
+    border-radius: 4px;
+    overflow: visible;
+  }
+
+  .bar-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    height: 100%;
+    min-width: 4px;
+    border-radius: 4px;
+    background: var(--chart-context);
+    transition: filter 0.15s ease;
+  }
+
+  .bar-row.emphasis .bar-fill {
+    background: var(--chart-emphasis);
+  }
+
+  .bar-row:hover .bar-fill {
+    filter: brightness(1.08);
+  }
+
+  .bar-value {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    color: var(--chart-ink-dim);
+    text-align: right;
+  }
+
+  .bar-row.emphasis .bar-value {
+    color: var(--chart-emphasis);
+    font-weight: 700;
+  }
+
+  .bar-row[title] { cursor: default; }
+
+  .chart-axis-note {
+    font-size: 12px;
+    color: var(--chart-ink-mute);
+    padding-left: 144px;
+  }
+
+  /* --- guardrail callout --- */
+
+  .callout {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    padding: 18px 20px;
+    border-radius: 10px;
+    background: var(--danger-soft);
+    border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  }
+
+  .callout .mark {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    font-weight: 700;
+    color: var(--danger);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .callout p {
+    margin: 0;
+    font-size: 14.5px;
+    color: var(--text);
+  }
+
+  .callout p + p { margin-top: 8px; }
+
+  .callout code {
+    font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", "IBM Plex Mono", Menlo, Consolas, monospace;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.92em;
+  }
+
+  footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12.5px;
+    color: var(--text-mute);
+    padding-top: 8px;
+    border-top: 1px solid var(--border-soft);
+  }
+
+  footer .mono { color: var(--text-mute); }
+
+  @media (max-width: 640px) {
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .bar-row { grid-template-columns: 88px 1fr 72px; }
+    .chart-axis-note { padding-left: 100px; }
+  }
+</style>
+
+<div class="page">
+
+  <header class="hero">
+    <div class="eyebrow">nowhereman · mcp cache · measured, not projected</div>
+    <h1>What the cache actually changes</h1>
+    <p>
+      One mechanism (skip the re-read on a hit) and one measurement (6,603 real tool calls
+      replayed from five Claude Code sessions on the <span class="mono">dfos</span> project).
+      No projections below — every number came out of the replay.
+    </p>
+  </header>
+
+  <section>
+    <div class="section-head">
+      <h2>The mechanism</h2>
+      <p>Same two hops either way — an agent calling a read tool against a source. The cache doesn't change the hops; it adds a branch that skips both of them on a hit.</p>
+    </div>
+    <div class="card diagram-card">
+      <figure>
+        <svg viewBox="0 0 920 330" role="img" aria-label="Without nowhereman, every request re-reads the tool and the source in full. With nowhereman, cache_get checks first: on a hit it returns straight to the agent, skipping the tool and source entirely; on a miss it runs the tool once and stores the result via cache_set before returning.">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+            </marker>
+            <marker id="arrow-accent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)" />
+            </marker>
+          </defs>
+
+          <!-- lane labels -->
+          <text x="4" y="34" class="lane-tag mono" fill="currentColor" opacity="0.55">WITHOUT</text>
+          <text x="4" y="216" class="lane-tag mono" fill="currentColor" opacity="0.55">WITH NOWHEREMAN</text>
+
+          <!-- ============ TOP LANE: WITHOUT ============ -->
+          <!-- Agent -->
+          <rect x="20" y="46" width="120" height="52" rx="7" fill="none" stroke="currentColor" stroke-opacity="0.5" />
+          <text x="80" y="77" text-anchor="middle" font-size="13" fill="currentColor">Agent</text>
+
+          <!-- arrow Agent -> Tool -->
+          <line x1="140" y1="72" x2="493" y2="72" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#arrow)" />
+          <text x="317" y="63" text-anchor="middle" font-size="11.5" fill="currentColor" opacity="0.7">Read(path)</text>
+
+          <!-- Tool -->
+          <rect x="500" y="46" width="130" height="52" rx="7" fill="none" stroke="currentColor" stroke-opacity="0.5" />
+          <text x="565" y="70" text-anchor="middle" font-size="13" fill="currentColor">Read tool</text>
+          <text x="565" y="86" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.6">runs every time</text>
+
+          <!-- arrow Tool -> Source -->
+          <line x1="630" y1="72" x2="723" y2="72" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#arrow)" />
+
+          <!-- Source -->
+          <rect x="730" y="46" width="170" height="52" rx="7" fill="none" stroke="currentColor" stroke-opacity="0.5" />
+          <text x="815" y="70" text-anchor="middle" font-size="13" fill="currentColor">File / API</text>
+          <text x="815" y="86" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.6">unchanged since last read</text>
+
+          <!-- return path, full content every time -->
+          <path d="M 815 98 L 815 130 Q 815 140 805 140 L 90 140 Q 80 140 80 130 L 80 98" fill="none" stroke="currentColor" stroke-opacity="0.35" stroke-dasharray="3 3" marker-end="url(#arrow)" />
+          <text x="447" y="156" text-anchor="middle" font-size="11.5" fill="currentColor" opacity="0.65">full contents, back to the agent — again next session, same bytes</text>
+
+          <!-- divider -->
+          <line x1="0" y1="196" x2="920" y2="196" stroke="currentColor" stroke-opacity="0.12" />
+
+          <!-- ============ BOTTOM LANE: WITH ============ -->
+          <!-- Agent -->
+          <rect x="20" y="240" width="120" height="52" rx="7" fill="none" stroke="currentColor" stroke-opacity="0.5" />
+          <text x="80" y="271" text-anchor="middle" font-size="13" fill="currentColor">Agent</text>
+
+          <!-- arrow Agent -> Cache -->
+          <line x1="140" y1="266" x2="243" y2="266" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#arrow)" />
+          <text x="191" y="257" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">cache_get</text>
+
+          <!-- Cache -->
+          <rect x="250" y="228" width="150" height="76" rx="7" fill="var(--accent-soft)" stroke="var(--accent)" />
+          <text x="325" y="254" text-anchor="middle" font-size="13" font-weight="700" fill="var(--accent)">nowhereman</text>
+          <text x="325" y="270" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.65">key = tool + args</text>
+          <text x="325" y="288" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.65">SQLite + similarity graph</text>
+
+          <!-- HIT: curved arrow straight back to agent, bypassing tool/source -->
+          <path d="M 300 228 L 300 210 Q 300 200 290 200 L 90 200 Q 80 200 80 210 L 80 240" fill="none" stroke="var(--accent)" stroke-width="1.6" marker-end="url(#arrow-accent)" />
+          <text x="190" y="214" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--accent)">hit → return cached response</text>
+
+          <!-- MISS: Cache -> Tool -->
+          <line x1="400" y1="266" x2="493" y2="266" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#arrow)" />
+          <text x="447" y="257" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">miss</text>
+
+          <!-- Tool -->
+          <rect x="500" y="240" width="130" height="52" rx="7" fill="none" stroke="currentColor" stroke-opacity="0.5" />
+          <text x="565" y="264" text-anchor="middle" font-size="13" fill="currentColor">Read tool</text>
+          <text x="565" y="280" text-anchor="middle" font-size="10.5" fill="currentColor" opacity="0.6">runs once</text>
+
+          <!-- Tool -> Source -->
+          <line x1="630" y1="266" x2="723" y2="266" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#arrow)" />
+
+          <!-- Source -->
+          <rect x="730" y="240" width="170" height="52" rx="7" fill="none" stroke="currentColor" stroke-opacity="0.5" />
+          <text x="815" y="270" text-anchor="middle" font-size="13" fill="currentColor">File / API</text>
+
+          <!-- Source -> back down to cache_set -->
+          <path d="M 815 292 L 815 312 Q 815 320 805 320 L 335 320 Q 325 320 325 312 L 325 304" fill="none" stroke="currentColor" stroke-opacity="0.5" marker-end="url(#arrow)" />
+          <text x="570" y="316" text-anchor="middle" font-size="11" fill="currentColor" opacity="0.7">cache_set — store once, for every future agent</text>
+        </svg>
+        <figcaption>
+          Both lanes make the same two hops on a miss. The only thing nowhereman adds is the branch
+          in the accent color — on a hit, the tool and the source are never touched.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Measured on real usage</h2>
+      <p>Replayed chronologically through the actual store, not simulated — 6,603 tool calls, 5 sessions, 16.45MB of tool output.</p>
+    </div>
+    <div class="kpi-row">
+      <div class="kpi-tile">
+        <div class="kpi-label">Read hit rate</div>
+        <div class="kpi-value accent">12.7%</div>
+        <div class="kpi-note">119 / 937 file reads were an unchanged repeat</div>
+      </div>
+      <div class="kpi-tile">
+        <div class="kpi-label">Bytes served from cache</div>
+        <div class="kpi-value">1.15 MB</div>
+        <div class="kpi-note">of 16.45MB total tool output</div>
+      </div>
+      <div class="kpi-tile">
+        <div class="kpi-label">Est. tokens saved</div>
+        <div class="kpi-value">231.6K</div>
+        <div class="kpi-note">~4 chars/token, on exact hits only</div>
+      </div>
+      <div class="kpi-tile">
+        <div class="kpi-label">Cache after replay</div>
+        <div class="kpi-value accent2">6,229<span style="font-size:15px; color:var(--text-mute); font-weight:500;"> / 7,862</span></div>
+        <div class="kpi-note">entries / similarity-graph edges</div>
+      </div>
+    </div>
+    <p class="kpi-caveat">
+      The blended hit rate across <b>every</b> tool is only 5.7% — that number is dragged down by
+      Bash, which is 56% of all calls and mostly shouldn't be cached at all (next section). Read
+      alone is where the real signal is.
+    </p>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Where the savings actually land</h2>
+      <p>Bytes served from cache instead of re-fetched, by tool. Read is the entire story; everything else is noise.</p>
+    </div>
+    <div class="card viz-root">
+      <div class="bars">
+        <div class="bar-row emphasis" title="Read: 997,510 bytes served from cache, 87.1% of all savings">
+          <div class="bar-name">Read</div>
+          <div class="bar-track"><div class="bar-fill" style="width: 100%;"></div></div>
+          <div class="bar-value">997.5K</div>
+        </div>
+        <div class="bar-row" title="Bash: 112,439 bytes — mostly a byproduct of re-running commands that shouldn't be cached">
+          <div class="bar-name">Bash</div>
+          <div class="bar-track"><div class="bar-fill" style="width: 11.3%;"></div></div>
+          <div class="bar-value">112.4K</div>
+        </div>
+        <div class="bar-row" title="WebSearch: 31,921 bytes">
+          <div class="bar-name">WebSearch</div>
+          <div class="bar-track"><div class="bar-fill" style="width: 3.2%;"></div></div>
+          <div class="bar-value">31.9K</div>
+        </div>
+        <div class="bar-row" title="Every other tool combined (Edit, Write, ToolSearch, ScheduleWakeup, AskUserQuestion, Skill): 3,361 bytes">
+          <div class="bar-name">All others</div>
+          <div class="bar-track"><div class="bar-fill" style="width: 0.4%;"></div></div>
+          <div class="bar-value">3.4K</div>
+        </div>
+      </div>
+      <div class="chart-axis-note">bytes served from cache (log-shaped gap: Read is 87% of the total)</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="callout">
+      <div class="mark">CAUTION</div>
+      <div>
+        <p>
+          <b>Raw repeat-count is not the same as safe-to-cache.</b> The most literally-repeated
+          Bash commands in this dataset were <code>git status --short</code> (17×) and
+          <code>git push origin main</code> (9×) — both re-run on purpose, because the point is
+          checking <em>current</em> state. Serving those from cache wouldn't save tokens, it would
+          serve a lie.
+        </p>
+        <p>
+          nowhereman's own guidance (<span class="mono">AGENTS.md</span>, the
+          <span class="mono">nowhereman-cache</span> skill) routes only idempotent, read-only
+          tools — Read, Grep, Glob, WebFetch, WebSearch — through the cache, and leaves Bash out
+          by default.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span class="mono">nowhereman/CLAUDE.md · AGENTS.md · .claude/skills/nowhereman-cache · .claude/skills/nowhereman-gain</span>
+    <span>source: replay of 5 Claude Code sessions, dfos project, run through the real <span class="mono">CacheStore</span></span>
+  </footer>
+
+</div>
