@@ -29,6 +29,11 @@ Call `cache_set` with the prompt/result and a TTL appropriate to how often the s
 (`null` for effectively-static content, a short TTL for anything that drifts). Pass
 `derived_from` with parent entry ids if this result was built on top of other cached entries.
 
+`cache_set` returns `{ id, linkedTo, evicted }`. `evicted` is how many entries the write pushed
+out to stay under the cache's ceilings — a consistently non-zero value means the cache is
+thrashing and its limits (`NOWHEREMAN_MAX_ENTRIES` / `NOWHEREMAN_MAX_BYTES`) are too small for
+what's being stored. Worth mentioning to the user; not worth reacting to on a single write.
+
 ## What NOT to route through this cache
 
 Skip `cache_get`/`cache_set` entirely for:
@@ -38,11 +43,24 @@ Skip `cache_get`/`cache_set` entirely for:
 - Anything with side effects.
 - Generic shell/Bash execution by default — only cache a specific Bash invocation if you've
   confirmed it's a pure, idempotent read (e.g. `cat` of a file that won't change).
+- **Secrets.** Never `cache_set` API keys, tokens, credentials, or private key material, and
+  don't cache a file read whose content is a secrets file. Entries are written to a local
+  database; permissions are owner-only and contents can be encrypted at rest, but neither makes
+  deliberately caching a credential safe. Re-reading the source is cheaper than leaking it.
 
 Measured on real session replay: read-only lookups (Read/Grep/Glob/WebFetch) landed a genuine
 ~13% hit rate on unchanged content; blindly caching literal-repeat shell commands mostly just
 re-served stale `git status`/`git push` output. When unsure, skip caching — a missed opportunity
 costs tokens, a stale cache hit costs correctness.
+
+## When a cache tool returns an error
+
+A cache tool can fail (`isError: true`) — for example if the database is unreadable or the
+configured encryption key doesn't match it. Treat that as a plain cache miss: **do the real work
+and continue**. Never retry the same cache call in a loop, and never present the error text as if
+it were the cached result. If every cache call in a session is failing, say so once rather than
+silently working around it — the fix is usually a configuration problem the user needs to know
+about.
 
 ## Checking whether it's helping
 
