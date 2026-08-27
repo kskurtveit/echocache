@@ -61,6 +61,13 @@ redundant to run again, but actively wrong to cache.
 | `cache_invalidate`  | Delete an entry, optionally cascading to its dependents                  |
 | `cache_stats`       | Hit rate and estimated token savings                                     |
 
+## Secrets
+
+Cached entries are written to a local database file. Permissions are locked to the owner, and
+`NOWHEREMAN_ENCRYPTION_KEY` can encrypt entry contents at rest — but neither makes it safe to
+deliberately cache credentials. Don't route API keys, tokens, or private key material through
+`cache_set`; re-reading the source is cheaper than leaking it.
+
 ## Non-goals
 
 This is a cache, not a source of truth. A cache hit is never more authoritative than the real

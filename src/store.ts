@@ -1,8 +1,9 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
-import { bump, getStat } from './db.js';
+import { bump, getStat, getMeta, setMeta } from './db.js';
 import { embed, cosineSimilarity, toBuffer, fromBuffer } from './embed.js';
 import { DEFAULT_CONFIG, type Config } from './config.js';
+import type { Cipher } from './crypto.js';
 
 export interface NodeRow {
     id: string;
@@ -61,9 +62,16 @@ function normalizePrompt(prompt: string): string {
     return prompt.trim().replace(/\s+/g, ' ');
 }
 
-export function computeKeyHash(model: string, prompt: string, params: Record<string, unknown>): string {
+export function computeKeyHash(
+    model: string,
+    prompt: string,
+    params: Record<string, unknown>,
+    cipher?: Cipher
+): string {
     const payload = stableStringify({ model, prompt: normalizePrompt(prompt), params });
-    return createHash('sha256').update(payload).digest('hex');
+    // With encryption on, key the digest — an unkeyed hash would let a DB reader confirm a
+    // guessed prompt, defeating the point of encrypting the prompt column.
+    return cipher ? cipher.digest(payload) : createHash('sha256').update(payload).digest('hex');
 }
 
 function estimateTokens(text: string): number {
@@ -77,14 +85,73 @@ interface EmbeddingRow {
     embedding: Buffer;
 }
 
+const ENCRYPTION_META_KEY = 'encryption_verifier';
+
 export class CacheStore {
     private readonly config: Config;
+    private readonly cipher: Cipher | undefined;
 
     constructor(
         private readonly db: Database.Database,
-        config: Partial<Config> = {}
+        config: Partial<Config> = {},
+        cipher?: Cipher
     ) {
         this.config = { ...DEFAULT_CONFIG, ...config };
+        this.cipher = cipher;
+        this.assertKeyMatchesDatabase();
+    }
+
+    /**
+     * Refuse to run against a database whose encryption state doesn't match the configured key.
+     * Silently proceeding would either write plaintext into an encrypted cache or fail later with
+     * an opaque decryption error on a random read.
+     */
+    private assertKeyMatchesDatabase(): void {
+        const stored = getMeta(this.db, ENCRYPTION_META_KEY);
+        // Only a key/state mismatch may fail here. An unrelated schema problem must fall through
+        // to the operation itself, where guard() turns it into a contained tool error instead of
+        // taking the whole server down.
+        let hasRows = false;
+        try {
+            hasRows = (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c > 0;
+        } catch {
+            hasRows = false;
+        }
+
+        if (this.cipher) {
+            if (stored === null) {
+                if (hasRows) {
+                    throw new Error(
+                        'This cache database holds unencrypted entries but NOWHEREMAN_ENCRYPTION_KEY is set. ' +
+                            'Point NOWHEREMAN_DB_PATH at a new file, or clear the existing one, to start encrypted.'
+                    );
+                }
+                setMeta(this.db, ENCRYPTION_META_KEY, this.cipher.makeVerifier());
+                return;
+            }
+            if (!this.cipher.matchesVerifier(stored)) {
+                throw new Error(
+                    'NOWHEREMAN_ENCRYPTION_KEY does not match the key this cache database was created with. ' +
+                        'Use the original key, or point NOWHEREMAN_DB_PATH at a new file.'
+                );
+            }
+            return;
+        }
+
+        if (stored !== null) {
+            throw new Error(
+                'This cache database is encrypted but NOWHEREMAN_ENCRYPTION_KEY is not set. ' +
+                    'Set the original key, or point NOWHEREMAN_DB_PATH at a new file.'
+            );
+        }
+    }
+
+    private seal(text: string): string {
+        return this.cipher ? this.cipher.encrypt(text) : text;
+    }
+
+    private open(text: string): string {
+        return this.cipher ? this.cipher.decrypt(text) : text;
     }
 
     private toEntry(row: NodeRow, now: number): CacheEntry {
@@ -97,8 +164,8 @@ export class CacheStore {
         return {
             id: row.id,
             model: row.model,
-            prompt: row.prompt,
-            response: row.response,
+            prompt: this.open(row.prompt),
+            response: this.open(row.response),
             params: JSON.parse(row.params_json),
             tags: JSON.parse(row.tags_json),
             createdAt: row.created_at,
@@ -114,7 +181,7 @@ export class CacheStore {
 
     /** Exact-match lookup by (model, prompt, params) — the "web cache" fast path. */
     get(model: string, prompt: string, params: Record<string, unknown> = {}): CacheEntry | null {
-        const keyHash = computeKeyHash(model, prompt, params);
+        const keyHash = computeKeyHash(model, prompt, params, this.cipher);
         const row = this.db.prepare<[string], NodeRow>('SELECT * FROM nodes WHERE key_hash = ?').get(keyHash);
         const now = Date.now();
         const entry = row ? this.toEntry(row, now) : null;
@@ -144,7 +211,7 @@ export class CacheStore {
         similarityThreshold?: number;
     }): { id: string; linkedTo: number; evicted: number } {
         const params = opts.params ?? {};
-        const keyHash = computeKeyHash(opts.model, opts.prompt, params);
+        const keyHash = computeKeyHash(opts.model, opts.prompt, params, this.cipher);
         const now = Date.now();
         const id = randomUUID();
         const vec = embed(`${opts.prompt}\n${opts.response}`);
@@ -161,7 +228,7 @@ export class CacheStore {
                      estimated_tokens = ? WHERE id = ?`
                 )
                 .run(
-                    opts.response,
+                    this.seal(opts.response),
                     JSON.stringify(params),
                     JSON.stringify(opts.tags ?? []),
                     toBuffer(vec),
@@ -186,8 +253,8 @@ export class CacheStore {
                 id,
                 keyHash,
                 opts.model,
-                opts.prompt,
-                opts.response,
+                this.seal(opts.prompt),
+                this.seal(opts.response),
                 JSON.stringify(params),
                 JSON.stringify(opts.tags ?? []),
                 toBuffer(vec),
@@ -401,7 +468,7 @@ export class CacheStore {
                 'SELECT id, model, prompt, hit_count FROM nodes ORDER BY hit_count DESC LIMIT 5'
             )
             .all()
-            .map(r => ({ id: r.id, model: r.model, prompt: r.prompt.slice(0, 120), hitCount: r.hit_count }));
+            .map(r => ({ id: r.id, model: r.model, prompt: this.open(r.prompt).slice(0, 120), hitCount: r.hit_count }));
         return {
             entries,
             edges,

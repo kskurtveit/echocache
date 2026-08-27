@@ -16,13 +16,26 @@
     "type": "git",
     "url": "git+https://github.com/kskurtveit/nowhereman.git"
   },
+  "bin": {
+    "nowhereman": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
+  ],
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "inspect": "npx @modelcontextprotocol/inspector npx tsx src/index.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "check": "npm run typecheck && npm run test"
+    "check": "npm run typecheck && npm run test",
+    "prepublishOnly": "npm run check && npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",

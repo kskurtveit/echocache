@@ -3,6 +3,7 @@ import * as z from 'zod/v4';
 import type Database from 'better-sqlite3';
 import { CacheStore } from './store.js';
 import type { Config } from './config.js';
+import { Cipher } from './crypto.js';
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 
@@ -25,7 +26,8 @@ function guard(label: string, fn: () => unknown): ToolResult {
 
 export function createServer(db: Database.Database, config: Partial<Config> = {}): McpServer {
     const server = new McpServer({ name: 'nowhereman', version: '0.1.0' });
-    const store = new CacheStore(db, config);
+    const cipher = config.encryptionKeyHex ? Cipher.fromHex(config.encryptionKeyHex) : undefined;
+    const store = new CacheStore(db, config, cipher);
 
     server.registerTool(
         'cache_get',

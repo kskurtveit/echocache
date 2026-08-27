@@ -45,6 +45,7 @@ All settings are environment variables, read once at startup by `loadConfig()`:
 | `NOWHEREMAN_DEFAULT_TTL_SECONDS` | `86400` (1 day) | Freshness lifetime when a caller omits one |
 | `NOWHEREMAN_SIMILARITY_THRESHOLD` | `0.85` | Cosine floor for auto-linking a `similar` edge |
 | `NOWHEREMAN_LINK_CANDIDATE_POOL` | `500` | Recent entries a new write is compared against |
+| `NOWHEREMAN_ENCRYPTION_KEY` | unset | 64 hex chars (32 bytes); enables at-rest encryption |
 
 The cache is shared across every project that registers this server, since a cached response is
 reusable regardless of which project asked for it.
@@ -94,11 +95,35 @@ Any other MCP-capable host takes the same launch command; only the config file d
 - Never `SELECT *` from `nodes` in a hot path — `response` bodies dominate row size, so scoring
   and scanning queries select `id, embedding` and fetch full rows only for the winners.
 
-## Not yet done (pre-release)
+## Security
 
-The package is `private: true` and has no `bin`/build step — it runs from source via `tsx`. Before
-any npm publish it needs: a compiled `dist/`, a `bin` entry pointing at compiled JS with a
-shebang, a `files` allowlist, and removal of `private`.
+The cache holds whatever agents put through it — file contents, API responses. Two layers:
 
-Responses are stored **unencrypted** on disk. Anything an agent caches — file contents, API
-responses — is readable by any process with access to the DB file. Don't route secrets through it.
+- **Always on**: the DB directory is created `0700` and the DB/WAL/SHM files are `0600`, so
+  default umask can't leave the cache group- or world-readable on a shared machine.
+- **Opt-in**: set `NOWHEREMAN_ENCRYPTION_KEY` to encrypt the `prompt` and `response` columns with
+  AES-256-GCM (random IV per value). With a key set, the cache key becomes an HMAC rather than a
+  plain SHA-256 — otherwise a DB reader could confirm a guessed prompt by hashing it.
+
+```sh
+export NOWHEREMAN_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+```
+
+A key/database mismatch is refused at startup with an actionable message rather than surfacing as
+an opaque decryption failure on some later read. Turning encryption on or off requires a fresh DB
+(`NOWHEREMAN_DB_PATH`) — there is no in-place migration.
+
+**What encryption does not protect**: the key comes from the environment of the same machine, so
+anyone who can read that environment or process memory can read the cache. It protects the file at
+rest — backups, disk images, another user on the box — not a compromised host. `model`, `params`,
+`tags`, timestamps, and the embedding vector remain unencrypted.
+
+## Packaging
+
+`npm run build` compiles to `dist/` via `tsconfig.build.json` (tests excluded, declarations and
+sourcemaps on) and marks `dist/index.js` executable; the shebang makes it directly runnable. The
+`files` allowlist keeps the tarball to `dist` plus docs — verify with `npm pack --dry-run`.
+
+The package is still `private: true`: publishing is a deliberate future step, not something to
+trip into. Removing that flag is the only remaining gate — `prepublishOnly` already runs
+`check` + `build`.

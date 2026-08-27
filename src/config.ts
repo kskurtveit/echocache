@@ -13,6 +13,8 @@ export interface Config {
     similarityThreshold: number;
     /** How many recent entries a new write is compared against when auto-linking. */
     linkCandidatePool: number;
+    /** 64-hex-character AES-256 key enabling at-rest encryption; undefined stores cleartext. */
+    encryptionKeyHex: string | undefined;
 }
 
 function intFromEnv(name: string, fallback: number): number {
@@ -42,7 +44,8 @@ export function loadConfig(): Config {
         maxBytes: intFromEnv('NOWHEREMAN_MAX_BYTES', 256 * 1024 * 1024),
         defaultTtlSeconds: intFromEnv('NOWHEREMAN_DEFAULT_TTL_SECONDS', 60 * 60 * 24),
         similarityThreshold: floatFromEnv('NOWHEREMAN_SIMILARITY_THRESHOLD', 0.85, 0, 1),
-        linkCandidatePool: intFromEnv('NOWHEREMAN_LINK_CANDIDATE_POOL', 500)
+        linkCandidatePool: intFromEnv('NOWHEREMAN_LINK_CANDIDATE_POOL', 500),
+        encryptionKeyHex: process.env.NOWHEREMAN_ENCRYPTION_KEY?.trim() || undefined
     };
 }
 
@@ -52,5 +55,6 @@ export const DEFAULT_CONFIG: Config = {
     maxBytes: 256 * 1024 * 1024,
     defaultTtlSeconds: 60 * 60 * 24,
     similarityThreshold: 0.85,
-    linkCandidatePool: 500
+    linkCandidatePool: 500,
+    encryptionKeyHex: undefined
 };

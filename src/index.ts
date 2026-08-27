@@ -24,6 +24,16 @@ function main(): void {
         process.exit(1);
     }
 
+    // Build the server once up front so a bad key or a key/database mismatch fails loudly here,
+    // rather than surfacing as an error on the first tool call.
+    try {
+        createServer(db, config);
+    } catch (err) {
+        console.error(`[nowhereman] ${err instanceof Error ? err.message : String(err)}`);
+        db.close();
+        process.exit(1);
+    }
+
     const shutdown = () => {
         try {
             db.close();
@@ -38,7 +48,8 @@ function main(): void {
     void serveStdio(() => createServer(db, config));
     console.error(
         `[nowhereman] MCP cache server on stdio — db: ${config.dbPath}, ` +
-            `max ${config.maxEntries} entries / ${Math.round(config.maxBytes / 1024 / 1024)}MB`
+            `max ${config.maxEntries} entries / ${Math.round(config.maxBytes / 1024 / 1024)}MB, ` +
+            `encryption: ${config.encryptionKeyHex ? 'on' : 'off'}`
     );
 }
 
