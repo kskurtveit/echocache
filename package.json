@@ -2,15 +2,27 @@
   "name": "nowhereman",
   "version": "0.1.0",
   "description": "An MCP caching server: exact-match response cache with HTTP-style freshness semantics, plus a lightweight knowledge graph for semantic recall of related cached results.",
+  "license": "MIT",
+  "private": true,
   "type": "module",
-  "bin": {
-    "nowhereman": "./src/index.ts"
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "cache",
+    "llm",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kskurtveit/nowhereman.git"
   },
   "scripts": {
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "inspect": "npx @modelcontextprotocol/inspector npx tsx src/index.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "check": "npm run typecheck && npm run test"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
@@ -18,6 +30,7 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",

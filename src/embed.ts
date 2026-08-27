@@ -57,6 +57,13 @@ export function toBuffer(vec: Float32Array): Buffer {
 }
 
 export function fromBuffer(buf: Buffer): Float32Array {
+    // A Float32Array view requires a 4-byte-aligned offset. SQLite BLOBs come back aligned in
+    // practice, but a pooled Buffer need not be — copy rather than throw in that case.
+    if (buf.byteOffset % Float32Array.BYTES_PER_ELEMENT !== 0) {
+        return new Float32Array(
+            buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer
+        );
+    }
     return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / Float32Array.BYTES_PER_ELEMENT);
 }
 

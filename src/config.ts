@@ -1,0 +1,56 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+export interface Config {
+    dbPath: string;
+    /** Hard ceiling on retained entries; the least-recently-used are evicted past it. */
+    maxEntries: number;
+    /** Hard ceiling on total retained response bytes. */
+    maxBytes: number;
+    /** Default freshness lifetime when a caller doesn't specify one. */
+    defaultTtlSeconds: number;
+    /** Cosine-similarity floor for auto-linking a new entry to existing ones. */
+    similarityThreshold: number;
+    /** How many recent entries a new write is compared against when auto-linking. */
+    linkCandidatePool: number;
+}
+
+function intFromEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === '') return fallback;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+        throw new Error(`${name} must be a non-negative number, got: ${raw}`);
+    }
+    return Math.floor(parsed);
+}
+
+function floatFromEnv(name: string, fallback: number, min: number, max: number): number {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === '') return fallback;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+        throw new Error(`${name} must be a number between ${min} and ${max}, got: ${raw}`);
+    }
+    return parsed;
+}
+
+export function loadConfig(): Config {
+    return {
+        dbPath: process.env.NOWHEREMAN_DB_PATH ?? join(homedir(), '.nowhereman', 'cache.db'),
+        maxEntries: intFromEnv('NOWHEREMAN_MAX_ENTRIES', 10_000),
+        maxBytes: intFromEnv('NOWHEREMAN_MAX_BYTES', 256 * 1024 * 1024),
+        defaultTtlSeconds: intFromEnv('NOWHEREMAN_DEFAULT_TTL_SECONDS', 60 * 60 * 24),
+        similarityThreshold: floatFromEnv('NOWHEREMAN_SIMILARITY_THRESHOLD', 0.85, 0, 1),
+        linkCandidatePool: intFromEnv('NOWHEREMAN_LINK_CANDIDATE_POOL', 500)
+    };
+}
+
+export const DEFAULT_CONFIG: Config = {
+    dbPath: join(homedir(), '.nowhereman', 'cache.db'),
+    maxEntries: 10_000,
+    maxBytes: 256 * 1024 * 1024,
+    defaultTtlSeconds: 60 * 60 * 24,
+    similarityThreshold: 0.85,
+    linkCandidatePool: 500
+};

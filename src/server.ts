@@ -2,10 +2,30 @@ import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import type Database from 'better-sqlite3';
 import { CacheStore } from './store.js';
+import type { Config } from './config.js';
 
-export function createServer(db: Database.Database): McpServer {
+type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
+
+/**
+ * A cache failure must never take the server down or masquerade as a cache miss with made-up
+ * data — surface it to the model as a tool error so it falls back to doing the real work.
+ */
+function guard(label: string, fn: () => unknown): ToolResult {
+    try {
+        return { content: [{ type: 'text', text: JSON.stringify(fn()) }] };
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[nowhereman] ${label} failed: ${message}`);
+        return {
+            content: [{ type: 'text', text: `nowhereman ${label} failed: ${message}` }],
+            isError: true
+        };
+    }
+}
+
+export function createServer(db: Database.Database, config: Partial<Config> = {}): McpServer {
     const server = new McpServer({ name: 'nowhereman', version: '0.1.0' });
-    const store = new CacheStore(db);
+    const store = new CacheStore(db, config);
 
     server.registerTool(
         'cache_get',
@@ -26,13 +46,11 @@ export function createServer(db: Database.Database): McpServer {
                     .describe('Other call parameters that affect the response (temperature, system prompt, etc.)')
             })
         },
-        async ({ model, prompt, params }) => {
-            const entry = store.get(model, prompt, params ?? {});
-            if (!entry) {
-                return { content: [{ type: 'text', text: JSON.stringify({ hit: false }) }] };
-            }
-            return { content: [{ type: 'text', text: JSON.stringify({ hit: true, entry }) }] };
-        }
+        async ({ model, prompt, params }) =>
+            guard('cache_get', () => {
+                const entry = store.get(model, prompt, params ?? {});
+                return entry ? { hit: true, entry } : { hit: false };
+            })
     );
 
     server.registerTool(
@@ -65,19 +83,19 @@ export function createServer(db: Database.Database): McpServer {
                 derived_from: z.array(z.string()).optional().describe('Ids of parent entries this was built from')
             })
         },
-        async ({ model, prompt, response, params, ttl_seconds, stale_while_revalidate_seconds, tags, derived_from }) => {
-            const result = store.set({
-                model,
-                prompt,
-                response,
-                params,
-                ttlSeconds: ttl_seconds,
-                staleWhileRevalidateSeconds: stale_while_revalidate_seconds,
-                tags,
-                derivedFrom: derived_from
-            });
-            return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-        }
+        async ({ model, prompt, response, params, ttl_seconds, stale_while_revalidate_seconds, tags, derived_from }) =>
+            guard('cache_set', () =>
+                store.set({
+                    model,
+                    prompt,
+                    response,
+                    params,
+                    ttlSeconds: ttl_seconds,
+                    staleWhileRevalidateSeconds: stale_while_revalidate_seconds,
+                    tags,
+                    derivedFrom: derived_from
+                })
+            )
     );
 
     server.registerTool(
@@ -93,10 +111,10 @@ export function createServer(db: Database.Database): McpServer {
                 min_similarity: z.number().min(0).max(1).optional().describe('Similarity floor 0-1, default 0.5')
             })
         },
-        async ({ text, top_k, min_similarity }) => {
-            const matches = store.query(text, { topK: top_k, minSimilarity: min_similarity });
-            return { content: [{ type: 'text', text: JSON.stringify({ matches }) }] };
-        }
+        async ({ text, top_k, min_similarity }) =>
+            guard('cache_query', () => ({
+                matches: store.query(text, { topK: top_k, minSimilarity: min_similarity })
+            }))
     );
 
     server.registerTool(
@@ -114,10 +132,8 @@ export function createServer(db: Database.Database): McpServer {
                 limit: z.number().int().positive().optional().describe('Max results, default 20')
             })
         },
-        async ({ id, relation, depth, limit }) => {
-            const results = store.related(id, { relation, depth, limit });
-            return { content: [{ type: 'text', text: JSON.stringify({ related: results }) }] };
-        }
+        async ({ id, relation, depth, limit }) =>
+            guard('cache_related', () => ({ related: store.related(id, { relation, depth, limit }) }))
     );
 
     server.registerTool(
@@ -132,10 +148,7 @@ export function createServer(db: Database.Database): McpServer {
                 cascade: z.boolean().optional().describe('Also delete entries derived from this one, default false')
             })
         },
-        async ({ id, cascade }) => {
-            const result = store.invalidate(id, { cascade });
-            return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-        }
+        async ({ id, cascade }) => guard('cache_invalidate', () => store.invalidate(id, { cascade }))
     );
 
     server.registerTool(
@@ -147,9 +160,7 @@ export function createServer(db: Database.Database): McpServer {
                 'paying off in a given session.',
             inputSchema: z.object({})
         },
-        async () => {
-            return { content: [{ type: 'text', text: JSON.stringify(store.stats()) }] };
-        }
+        async () => guard('cache_stats', () => store.stats())
     );
 
     return server;

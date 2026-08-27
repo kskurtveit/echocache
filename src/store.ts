@@ -2,6 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { bump, getStat } from './db.js';
 import { embed, cosineSimilarity, toBuffer, fromBuffer } from './embed.js';
+import { DEFAULT_CONFIG, type Config } from './config.js';
 
 export interface NodeRow {
     id: string;
@@ -70,12 +71,21 @@ function estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);
 }
 
-const DEFAULT_SIMILARITY_THRESHOLD = 0.85;
-const DEFAULT_TTL_SECONDS = 60 * 60 * 24; // 1 day
-const LINK_CANDIDATE_POOL = 500;
+/** Columns needed to score similarity — deliberately excludes `response`, which dominates row size. */
+interface EmbeddingRow {
+    id: string;
+    embedding: Buffer;
+}
 
 export class CacheStore {
-    constructor(private readonly db: Database.Database) {}
+    private readonly config: Config;
+
+    constructor(
+        private readonly db: Database.Database,
+        config: Partial<Config> = {}
+    ) {
+        this.config = { ...DEFAULT_CONFIG, ...config };
+    }
 
     private toEntry(row: NodeRow, now: number): CacheEntry {
         const age = (now - row.created_at) / 1000;
@@ -132,7 +142,7 @@ export class CacheStore {
         tags?: string[];
         derivedFrom?: string[];
         similarityThreshold?: number;
-    }): { id: string; linkedTo: number } {
+    }): { id: string; linkedTo: number; evicted: number } {
         const params = opts.params ?? {};
         const keyHash = computeKeyHash(opts.model, opts.prompt, params);
         const now = Date.now();
@@ -157,13 +167,13 @@ export class CacheStore {
                     toBuffer(vec),
                     now,
                     now,
-                    opts.ttlSeconds === undefined ? DEFAULT_TTL_SECONDS : opts.ttlSeconds,
+                    opts.ttlSeconds === undefined ? this.config.defaultTtlSeconds : opts.ttlSeconds,
                     opts.staleWhileRevalidateSeconds ?? 0,
                     estTokens,
                     existing.id
                 );
             bump(this.db, 'sets');
-            return { id: existing.id, linkedTo: 0 };
+            return { id: existing.id, linkedTo: 0, evicted: this.enforceLimits() };
         }
 
         this.db
@@ -183,20 +193,24 @@ export class CacheStore {
                 toBuffer(vec),
                 now,
                 now,
-                opts.ttlSeconds === undefined ? DEFAULT_TTL_SECONDS : opts.ttlSeconds,
+                opts.ttlSeconds === undefined ? this.config.defaultTtlSeconds : opts.ttlSeconds,
                 opts.staleWhileRevalidateSeconds ?? 0,
                 estTokens
             );
         bump(this.db, 'sets');
 
         let linkedTo = 0;
-        const threshold = opts.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
+        const threshold = opts.similarityThreshold ?? this.config.similarityThreshold;
         // Comparing against every existing node would make each write O(n) and the whole cache
         // O(n^2) to fill. Capping the candidate pool bounds write cost as the cache grows, at the
         // cost of not linking against nodes older than the cap — acceptable for a local dev cache.
+        // Only id+embedding are selected: pulling `response` here would load the whole cache body
+        // into memory on every write.
         const others = this.db
-            .prepare<[string, number], NodeRow>('SELECT * FROM nodes WHERE id != ? ORDER BY created_at DESC LIMIT ?')
-            .all(id, LINK_CANDIDATE_POOL);
+            .prepare<[string, number], EmbeddingRow>(
+                'SELECT id, embedding FROM nodes WHERE id != ? ORDER BY created_at DESC LIMIT ?'
+            )
+            .all(id, this.config.linkCandidatePool);
         const insertEdge = this.db.prepare(
             'INSERT OR REPLACE INTO edges (from_id, to_id, relation, weight) VALUES (?, ?, ?, ?)'
         );
@@ -213,7 +227,66 @@ export class CacheStore {
             linkedTo++;
         }
 
-        return { id, linkedTo };
+        const evicted = this.enforceLimits();
+        return { id, linkedTo, evicted };
+    }
+
+    /**
+     * Bound the cache: drop TTL-expired entries first (they can never be served), then evict
+     * least-recently-used entries until both the entry-count and byte ceilings are satisfied.
+     */
+    enforceLimits(): number {
+        let evicted = 0;
+
+        const expired = this.db
+            .prepare<[number], { id: string }>(
+                `SELECT id FROM nodes
+                 WHERE ttl_seconds IS NOT NULL
+                   AND (? - created_at) / 1000.0 > ttl_seconds + stale_while_revalidate_s`
+            )
+            .all(Date.now());
+        for (const row of expired) {
+            this.deleteNode(row.id);
+            evicted++;
+        }
+
+        const overflow = this.db
+            .prepare<[number], { id: string }>(
+                'SELECT id FROM nodes ORDER BY last_accessed_at DESC LIMIT -1 OFFSET ?'
+            )
+            .all(this.config.maxEntries);
+        for (const row of overflow) {
+            this.deleteNode(row.id);
+            evicted++;
+        }
+
+        // Byte ceiling: walk least-recently-used first until the retained total fits.
+        let totalBytes = (
+            this.db.prepare('SELECT COALESCE(SUM(LENGTH(response)), 0) AS b FROM nodes').get() as { b: number }
+        ).b;
+        if (totalBytes > this.config.maxBytes) {
+            const candidates = this.db
+                .prepare<[], { id: string; bytes: number }>(
+                    'SELECT id, LENGTH(response) AS bytes FROM nodes ORDER BY last_accessed_at ASC'
+                )
+                .all();
+            for (const row of candidates) {
+                if (totalBytes <= this.config.maxBytes) break;
+                this.deleteNode(row.id);
+                totalBytes -= row.bytes;
+                evicted++;
+            }
+        }
+
+        if (evicted > 0) bump(this.db, 'evictions', evicted);
+        return evicted;
+    }
+
+    private deleteNode(id: string): boolean {
+        const info = this.db.prepare('DELETE FROM nodes WHERE id = ?').run(id);
+        if (info.changes === 0) return false;
+        this.db.prepare('DELETE FROM edges WHERE from_id = ? OR to_id = ?').run(id, id);
+        return true;
     }
 
     /** Semantic search across all nodes, independent of exact-match key. */
@@ -222,13 +295,23 @@ export class CacheStore {
         const minSimilarity = opts.minSimilarity ?? 0.5;
         const vec = embed(text);
         const now = Date.now();
-        const rows = this.db.prepare<[], NodeRow>('SELECT * FROM nodes').all();
-        const scored = rows
-            .map(row => ({ row, sim: cosineSimilarity(vec, fromBuffer(row.embedding)) }))
+        // Score against embeddings alone, then fetch full rows only for the winners — otherwise
+        // every query would pull the entire cache's response bodies into memory.
+        const scored = this.db
+            .prepare<[], EmbeddingRow>('SELECT id, embedding FROM nodes')
+            .all()
+            .map(row => ({ id: row.id, sim: cosineSimilarity(vec, fromBuffer(row.embedding)) }))
             .filter(s => s.sim >= minSimilarity)
             .sort((a, b) => b.sim - a.sim)
             .slice(0, topK);
-        return scored.map(({ row, sim }) => ({ ...this.toEntry(row, now), similarity: sim }));
+
+        const nodeQuery = this.db.prepare<[string], NodeRow>('SELECT * FROM nodes WHERE id = ?');
+        const matches: QueryMatch[] = [];
+        for (const { id, sim } of scored) {
+            const row = nodeQuery.get(id);
+            if (row) matches.push({ ...this.toEntry(row, now), similarity: sim });
+        }
+        return matches;
     }
 
     /** Graph traversal (BFS) from a node, following edges up to `depth` hops. */
@@ -272,10 +355,12 @@ export class CacheStore {
     /** Delete a node. With cascade, also deletes nodes that declared themselves derived-from it. */
     invalidate(id: string, opts: { cascade?: boolean } = {}): { deleted: string[] } {
         const deleted: string[] = [];
+        const seen = new Set<string>();
         const toDelete = [id];
         while (toDelete.length > 0) {
             const current = toDelete.pop()!;
-            if (deleted.includes(current)) continue;
+            if (seen.has(current)) continue;
+            seen.add(current);
             if (opts.cascade) {
                 const dependents = this.db
                     .prepare<[string], { from_id: string }>(
@@ -284,11 +369,7 @@ export class CacheStore {
                     .all(current);
                 for (const dep of dependents) toDelete.push(dep.from_id);
             }
-            const info = this.db.prepare('DELETE FROM nodes WHERE id = ?').run(current);
-            if (info.changes > 0) {
-                deleted.push(current);
-                this.db.prepare('DELETE FROM edges WHERE from_id = ? OR to_id = ?').run(current, current);
-            }
+            if (this.deleteNode(current)) deleted.push(current);
         }
         return { deleted };
     }
@@ -301,13 +382,19 @@ export class CacheStore {
         sets: number;
         hitRate: number;
         estimatedTokensSaved: number;
+        evictions: number;
+        bytesStored: number;
         topEntries: { id: string; model: string; prompt: string; hitCount: number }[];
     } {
         const entries = (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c;
         const edges = (this.db.prepare('SELECT COUNT(*) AS c FROM edges').get() as { c: number }).c;
+        const bytesStored = (
+            this.db.prepare('SELECT COALESCE(SUM(LENGTH(response)), 0) AS b FROM nodes').get() as { b: number }
+        ).b;
         const hits = getStat(this.db, 'hits');
         const misses = getStat(this.db, 'misses');
         const sets = getStat(this.db, 'sets');
+        const evictions = getStat(this.db, 'evictions');
         const estimatedTokensSaved = getStat(this.db, 'tokens_saved');
         const topEntries = this.db
             .prepare<[], { id: string; model: string; prompt: string; hit_count: number }>(
@@ -323,6 +410,8 @@ export class CacheStore {
             sets,
             hitRate: hits + misses === 0 ? 0 : hits / (hits + misses),
             estimatedTokensSaved,
+            evictions,
+            bytesStored,
             topEntries
         };
     }
