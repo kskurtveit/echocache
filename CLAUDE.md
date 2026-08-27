@@ -65,6 +65,12 @@ null` never expire but are still subject to the LRU ceilings.
 
 CI (`.github/workflows/ci.yml`) runs typecheck + tests on Node 20 and 22 for every push and PR.
 
+The `test` script's glob is **unquoted on purpose** (`src/*.test.ts`, not `"src/**/*.test.ts"`):
+Node 20's `--test` does not expand glob patterns itself — that arrived in Node 21 — so a quoted
+pattern is passed through literally and the run fails with "Could not find". Leaving it unquoted
+lets the shell expand it, which works on both supported versions. This also means test files must
+stay flat in `src/`; a nested one would be silently skipped.
+
 When a similarity assertion fails, check the real cosine value before adjusting the test — the
 threshold is 0.85 and near-miss phrasings often land just under it.
 

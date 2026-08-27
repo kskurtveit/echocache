@@ -33,7 +33,7 @@
     "inspect": "npx @modelcontextprotocol/inspector npx tsx src/index.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && chmod +x dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "tsx --test src/*.test.ts",
     "check": "npm run typecheck && npm run test",
     "prepublishOnly": "npm run check && npm run build"
   },
