@@ -1,7 +1,17 @@
 import { randomUUID, createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { bump, getStat, getMeta, setMeta } from './db.js';
-import { embed, cosineSimilarity, toBuffer, fromBuffer } from './embed.js';
+import {
+    embed,
+    idfWeights,
+    documentSimilarity,
+    queryScore,
+    prepareQuery,
+    toBuffer,
+    fromBuffer,
+    type Embedding,
+    type CorpusStats
+} from './embed.js';
 import { DEFAULT_CONFIG, type Config } from './config.js';
 import type { Cipher } from './crypto.js';
 
@@ -86,6 +96,17 @@ interface EmbeddingRow {
 }
 
 const ENCRYPTION_META_KEY = 'encryption_verifier';
+const EMBEDDING_META_KEY = 'embedding_version';
+
+/** Bumped whenever a change to embed() makes previously stored vectors unreadable. */
+const EMBEDDING_VERSION = '2';
+
+/**
+ * Floor for `query()`, calibrated against realistic content rather than near-duplicate pairs.
+ * On the corpus in src/retrieval.test.ts the worst genuine match scores 0.52, a plausible but
+ * wrong entry reaches 0.36, and a query matching nothing scores 0.00.
+ */
+const DEFAULT_QUERY_FLOOR = 0.3;
 
 export class CacheStore {
     private readonly config: Config;
@@ -99,6 +120,71 @@ export class CacheStore {
         this.config = { ...DEFAULT_CONFIG, ...config };
         this.cipher = cipher;
         this.assertKeyMatchesDatabase();
+        this.migrateEmbeddings();
+    }
+
+    /**
+     * Re-embed every entry when the vector format changes. Runs here rather than in openDb()
+     * because reaching the stored text needs the cipher.
+     *
+     * Existing `similar` edges are dropped rather than recomputed: they were scored by the old
+     * metric, so they mean nothing under the new one, and rebuilding the whole graph would make
+     * startup O(n²) on a cache that exists to be fast. Later writes relink as they land.
+     */
+    private migrateEmbeddings(): void {
+        if (getMeta(this.db, EMBEDDING_META_KEY) === EMBEDDING_VERSION) return;
+
+        const rows = this.db
+            .prepare<[], { id: string; prompt: string; response: string }>(
+                'SELECT id, prompt, response FROM nodes'
+            )
+            .all();
+
+        const migrate = this.db.transaction(() => {
+            this.db.exec("DELETE FROM edges WHERE relation = 'similar'");
+            this.db.exec('DELETE FROM doc_freq');
+            const update = this.db.prepare('UPDATE nodes SET embedding = ? WHERE id = ?');
+            for (const row of rows) {
+                const embedding = embed(`${this.open(row.prompt)}\n${this.open(row.response)}`);
+                update.run(toBuffer(embedding), row.id);
+                this.addToDocFreq(embedding);
+            }
+            setMeta(this.db, EMBEDDING_META_KEY, EMBEDDING_VERSION);
+        });
+        migrate();
+
+        if (rows.length > 0) {
+            console.error(
+                `[nowhereman] re-embedded ${rows.length} cache entries for embedding v${EMBEDDING_VERSION}; ` +
+                    'similarity links will rebuild as entries are written'
+            );
+        }
+    }
+
+    private addToDocFreq(embedding: Embedding): void {
+        const stmt = this.db.prepare(
+            `INSERT INTO doc_freq (bucket, count) VALUES (?, 1)
+             ON CONFLICT(bucket) DO UPDATE SET count = count + 1`
+        );
+        for (const bucket of embedding.buckets) stmt.run(bucket);
+    }
+
+    private removeFromDocFreq(embedding: Embedding): void {
+        // Rows are left at zero rather than deleted; idf() treats absent and zero alike, and
+        // rewriting the same buckets is cheaper than churning rows on every eviction.
+        const stmt = this.db.prepare('UPDATE doc_freq SET count = MAX(0, count - 1) WHERE bucket = ?');
+        for (const bucket of embedding.buckets) stmt.run(bucket);
+    }
+
+    private corpusStats(): CorpusStats {
+        const docCount = (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c;
+        const docFreq = new Map<number, number>();
+        for (const row of this.db
+            .prepare<[], { bucket: number; count: number }>('SELECT bucket, count FROM doc_freq WHERE count > 0')
+            .all()) {
+            docFreq.set(row.bucket, row.count);
+        }
+        return { docCount, docFreq };
     }
 
     /**
@@ -214,13 +300,16 @@ export class CacheStore {
         const keyHash = computeKeyHash(opts.model, opts.prompt, params, this.cipher);
         const now = Date.now();
         const id = randomUUID();
-        const vec = embed(`${opts.prompt}\n${opts.response}`);
+        const embedding = embed(`${opts.prompt}\n${opts.response}`);
         const estTokens = estimateTokens(opts.response);
 
         const existing = this.db
-            .prepare<[string], { id: string }>('SELECT id FROM nodes WHERE key_hash = ?')
+            .prepare<[string], EmbeddingRow>('SELECT id, embedding FROM nodes WHERE key_hash = ?')
             .get(keyHash);
         if (existing) {
+            // The replacement occupies different buckets; retire the old row's contribution
+            // before adding the new one, or document frequencies drift permanently high.
+            this.removeFromDocFreq(fromBuffer(existing.embedding));
             this.db
                 .prepare(
                     `UPDATE nodes SET response = ?, params_json = ?, tags_json = ?, embedding = ?,
@@ -231,7 +320,7 @@ export class CacheStore {
                     this.seal(opts.response),
                     JSON.stringify(params),
                     JSON.stringify(opts.tags ?? []),
-                    toBuffer(vec),
+                    toBuffer(embedding),
                     now,
                     now,
                     opts.ttlSeconds === undefined ? this.config.defaultTtlSeconds : opts.ttlSeconds,
@@ -239,6 +328,7 @@ export class CacheStore {
                     estTokens,
                     existing.id
                 );
+            this.addToDocFreq(embedding);
             bump(this.db, 'sets');
             return { id: existing.id, linkedTo: 0, evicted: this.enforceLimits() };
         }
@@ -257,16 +347,18 @@ export class CacheStore {
                 this.seal(opts.response),
                 JSON.stringify(params),
                 JSON.stringify(opts.tags ?? []),
-                toBuffer(vec),
+                toBuffer(embedding),
                 now,
                 now,
                 opts.ttlSeconds === undefined ? this.config.defaultTtlSeconds : opts.ttlSeconds,
                 opts.staleWhileRevalidateSeconds ?? 0,
                 estTokens
             );
+        this.addToDocFreq(embedding);
         bump(this.db, 'sets');
 
         let linkedTo = 0;
+        const weights = idfWeights(this.corpusStats());
         const threshold = opts.similarityThreshold ?? this.config.similarityThreshold;
         // Comparing against every existing node would make each write O(n) and the whole cache
         // O(n^2) to fill. Capping the candidate pool bounds write cost as the cache grows, at the
@@ -282,7 +374,7 @@ export class CacheStore {
             'INSERT OR REPLACE INTO edges (from_id, to_id, relation, weight) VALUES (?, ?, ?, ?)'
         );
         for (const other of others) {
-            const sim = cosineSimilarity(vec, fromBuffer(other.embedding));
+            const sim = documentSimilarity(embedding, fromBuffer(other.embedding), weights);
             if (sim >= threshold) {
                 insertEdge.run(id, other.id, 'similar', sim);
                 insertEdge.run(other.id, id, 'similar', sim);
@@ -350,8 +442,14 @@ export class CacheStore {
     }
 
     private deleteNode(id: string): boolean {
+        // Read the vector before the row goes, so its document-frequency contribution can be
+        // retired — otherwise eviction quietly inflates DF and deflates every later IDF weight.
+        const row = this.db
+            .prepare<[string], { embedding: Buffer }>('SELECT embedding FROM nodes WHERE id = ?')
+            .get(id);
         const info = this.db.prepare('DELETE FROM nodes WHERE id = ?').run(id);
         if (info.changes === 0) return false;
+        if (row) this.removeFromDocFreq(fromBuffer(row.embedding));
         this.db.prepare('DELETE FROM edges WHERE from_id = ? OR to_id = ?').run(id, id);
         return true;
     }
@@ -359,15 +457,17 @@ export class CacheStore {
     /** Semantic search across all nodes, independent of exact-match key. */
     query(text: string, opts: { topK?: number; minSimilarity?: number } = {}): QueryMatch[] {
         const topK = opts.topK ?? 5;
-        const minSimilarity = opts.minSimilarity ?? 0.5;
-        const vec = embed(text);
+        const minSimilarity = opts.minSimilarity ?? DEFAULT_QUERY_FLOOR;
         const now = Date.now();
+        const weights = idfWeights(this.corpusStats());
+        const query = prepareQuery(embed(text), weights);
+
         // Score against embeddings alone, then fetch full rows only for the winners — otherwise
         // every query would pull the entire cache's response bodies into memory.
         const scored = this.db
             .prepare<[], EmbeddingRow>('SELECT id, embedding FROM nodes')
             .all()
-            .map(row => ({ id: row.id, sim: cosineSimilarity(vec, fromBuffer(row.embedding)) }))
+            .map(row => ({ id: row.id, sim: queryScore(query, fromBuffer(row.embedding), weights) }))
             .filter(s => s.sim >= minSimilarity)
             .sort((a, b) => b.sim - a.sim)
             .slice(0, topK);

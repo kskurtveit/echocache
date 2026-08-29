@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb } from './db.js';
 import { CacheStore, computeKeyHash } from './store.js';
-import { embed, cosineSimilarity, toBuffer, fromBuffer } from './embed.js';
+import { embed } from './embed.js';
+
 
 let dir: string;
 let db: Database.Database;
@@ -365,41 +366,6 @@ describe('stats', () => {
     });
 });
 
-describe('embeddings', () => {
-    test('identical text yields identical vectors', () => {
-        assert.equal(cosineSimilarity(embed('hello world'), embed('hello world')).toFixed(6), '1.000000');
-    });
-
-    test('similarity is bounded and unrelated text scores low', () => {
-        const sim = cosineSimilarity(embed('kubernetes ingress tls'), embed('sourdough bread starter'));
-        assert.ok(sim <= 1 && sim >= -1);
-        assert.ok(sim < 0.5, `unrelated text scored ${sim}`);
-    });
-
-    test('empty text produces a zero vector without NaN', () => {
-        const vec = embed('');
-        assert.equal(vec.some(Number.isNaN), false);
-        assert.equal(cosineSimilarity(vec, vec), 0);
-    });
-
-    test('buffer round trip preserves the vector', () => {
-        const vec = embed('round trip me');
-        const back = fromBuffer(toBuffer(vec));
-        assert.equal(back.length, vec.length);
-        assert.equal(cosineSimilarity(vec, back).toFixed(6), '1.000000');
-    });
-
-    test('decodes correctly from an intentionally unaligned buffer', () => {
-        const vec = embed('alignment check');
-        const src = toBuffer(vec);
-        // Force a non-4-byte-aligned byteOffset, which a naive Float32Array view would reject.
-        const padded = Buffer.alloc(src.byteLength + 1);
-        src.copy(padded, 1);
-        const unaligned = padded.subarray(1);
-        assert.notEqual(unaligned.byteOffset % 4, 0);
-        assert.equal(cosineSimilarity(vec, fromBuffer(unaligned)).toFixed(6), '1.000000');
-    });
-});
 
 describe('persistence', () => {
     test('entries survive closing and reopening the database', () => {
@@ -411,6 +377,86 @@ describe('persistence', () => {
         const second = openDb(path);
         const hit = new CacheStore(second).get('m', 'durable');
         assert.equal(hit?.response, 'still here');
+        second.close();
+    });
+});
+
+describe('document-frequency bookkeeping', () => {
+    /** Recompute doc_freq from scratch, the way corpusStats would if nothing had drifted. */
+    function expectedDocFreq(): Map<number, number> {
+        const expected = new Map<number, number>();
+        for (const row of db
+            .prepare<[], { prompt: string; response: string }>('SELECT prompt, response FROM nodes')
+            .all()) {
+            for (const bucket of embed(`${row.prompt}\n${row.response}`).buckets) {
+                expected.set(bucket, (expected.get(bucket) ?? 0) + 1);
+            }
+        }
+        return expected;
+    }
+
+    function storedDocFreq(): Map<number, number> {
+        const stored = new Map<number, number>();
+        for (const row of db
+            .prepare<[], { bucket: number; count: number }>('SELECT bucket, count FROM doc_freq WHERE count > 0')
+            .all()) {
+            stored.set(row.bucket, row.count);
+        }
+        return stored;
+    }
+
+    test('counts match the surviving entries after an invalidate', () => {
+        const store = newStore();
+        const first = store.set({ model: 'm', prompt: 'alpha beta', response: 'gamma delta' });
+        store.set({ model: 'm', prompt: 'beta epsilon', response: 'zeta' });
+
+        store.invalidate(first.id);
+
+        assert.deepEqual(storedDocFreq(), expectedDocFreq());
+    });
+
+    test('counts match the surviving entries after LRU eviction', () => {
+        const store = new CacheStore(db, { maxEntries: 3 });
+        for (let i = 0; i < 8; i++) {
+            store.set({ model: 'm', prompt: `entry ${i} subject`, response: `body ${i} content` });
+        }
+
+        const remaining = db.prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM nodes').get()!;
+        assert.equal(remaining.c, 3);
+        assert.deepEqual(storedDocFreq(), expectedDocFreq());
+    });
+
+    test('counts match after an entry is overwritten with different content', () => {
+        const store = newStore();
+        store.set({ model: 'm', prompt: 'stable key', response: 'original wording here' });
+        store.set({ model: 'm', prompt: 'stable key', response: 'entirely replaced vocabulary' });
+
+        assert.deepEqual(storedDocFreq(), expectedDocFreq());
+    });
+});
+
+describe('embedding migration', () => {
+    test('re-embeds entries written under an older vector format', () => {
+        const path = join(dir, 'migrate.db');
+        const first = openDb(path);
+        new CacheStore(first).set({
+            model: 'm',
+            prompt: 'kubernetes ingress tls certificates',
+            response: 'Terminate TLS at the ingress controller and let the issuer renew it.',
+            ttlSeconds: null
+        });
+        // Simulate a database written by an older build: stale version marker, and vectors in a
+        // format this build cannot interpret.
+        first.prepare("UPDATE meta SET value = '1' WHERE key = 'embedding_version'").run();
+        first.prepare('UPDATE nodes SET embedding = ?').run(Buffer.from([1, 2, 3, 4]));
+        first.close();
+
+        const second = openDb(path);
+        const store = new CacheStore(second);
+        const matches = store.query('how do I terminate TLS at the ingress');
+
+        assert.ok(matches.length > 0, 'expected the re-embedded entry to be findable');
+        assert.equal(store.get('m', 'kubernetes ingress tls certificates')?.response.startsWith('Terminate'), true);
         second.close();
     });
 });

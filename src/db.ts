@@ -62,6 +62,11 @@ export function openDb(path: string): Database.Database {
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS doc_freq (
+            bucket INTEGER PRIMARY KEY,
+            count  INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE INDEX IF NOT EXISTS idx_edges_from ON edges(from_id);
         CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
     `);
