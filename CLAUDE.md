@@ -23,7 +23,8 @@ nowhereman is a Model Context Protocol server exposing a cache with two lookup p
 - `src/server.ts` — MCP tool registration (`@modelcontextprotocol/server`), wires tools to `CacheStore`.
 - `src/index.ts` — stdio entrypoint.
 - `src/*.test.ts` — `node:test` suites, run via `tsx --test`. `retrieval.test.ts` pins search
-  quality at the shipped defaults; see Testing below.
+  quality at the shipped defaults and `niche.test.ts` pins the cross-session recall the product
+  exists for; see Testing below.
 
 ## Running
 
@@ -71,6 +72,12 @@ Node 20's `--test` does not expand glob patterns itself — that arrived in Node
 pattern is passed through literally and the run fails with "Could not find". Leaving it unquoted
 lets the shell expand it, which works on both supported versions. This also means test files must
 stay flat in `src/`; a nested one would be silently skipped.
+
+`niche.test.ts` pins the use case the product is *for*: a derivation outliving the session that
+produced it, recalled later by different wording, with fingerprint parents so a changed source can
+cascade-invalidate what was derived from it. If a change breaks these, the cache no longer does
+the one thing it is worth running for — measured at ~28x fewer tokens than re-reading `express/lib`
+(15,504 → 549). Caching file reads is *not* in scope and saves nothing; see `AGENTS.md`.
 
 `retrieval.test.ts` is the calibration suite: it runs at the **shipped defaults**, with no
 threshold overrides, over long documents and short queries. Every threshold in `embed.ts` and

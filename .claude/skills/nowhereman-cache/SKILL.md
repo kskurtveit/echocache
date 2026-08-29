@@ -23,6 +23,23 @@ description of what was asked.
 If nothing matches exactly, try `cache_query(text)` — semantic search across cached entries by
 meaning, useful when the exact wording or path differs from a prior lookup.
 
+## The case this is for: re-orientation across sessions
+
+You read a codebase to understand it; the session ends; a later session needs that understanding
+again. Caching the files saves nothing — a hit returns the same tokens the read did. Caching your
+*conclusion* replaces the entire re-read: measured at 15,504 tokens to re-read `express/lib`
+against 549 to serve the derived orientation, ~28x fewer, repaid on the first reuse.
+
+So when you finish expensive orientation or analysis, write the conclusion back — and start a
+session with `cache_query`, not `cache_get`, since you will rarely phrase the question exactly as
+last time.
+
+To keep a derivation honest, store a **fingerprint** entry per source file (`model:
+"source-fingerprint"`, response = the file's hash, never its contents) and pass those ids as
+`derived_from`. Re-hash on a later session; if a file moved,
+`cache_invalidate(<fingerprint id>, cascade: true)` drops everything derived from it and spares
+the rest. A TTL cannot detect a source change; this can.
+
 ## After doing the work
 
 Call `cache_set` with the prompt/result and a TTL appropriate to how often the source changes

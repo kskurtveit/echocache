@@ -62,6 +62,49 @@ at output rates. Reading it back on a hit costs the same tokens as any other too
 - **In between**: web fetches and doc lookups. Cheap enough to redo that the raw page rarely earns
   its write — but a distilled answer drawn from several of them usually does.
 
+### The case this cache exists for
+
+Re-orientation across sessions. You read a codebase to understand it, the session ends, and a
+later session needs that understanding again. Caching the *files* saves nothing. Caching what you
+*concluded* replaces the whole re-read.
+
+Measured on `express/lib` — six files, 62KB:
+
+| | tokens |
+|---|---|
+| re-reading the source in a later session | 15,504 |
+| serving the cached orientation instead | 549 |
+| | **~28x fewer** |
+
+The write cost 549 output tokens, paid once. At output-to-input rates that is repaid by the first
+reuse and free thereafter — the opposite of a cached file read, which never repays anything.
+
+So when you finish expensive orientation or analysis work, write the *conclusion* back:
+
+```
+cache_set(model: "orient",
+          prompt: "<the question you answered>",
+          response: "<what you concluded>",
+          derived_from: [<fingerprint ids, see below>])
+```
+
+Ask with `cache_query` rather than `cache_get` when starting: a later session rarely phrases the
+question the same way, and semantic recall is what makes the entry findable at all.
+
+### Keeping a derivation honest about its sources
+
+A derivation goes wrong when its source changes underneath it, and a TTL cannot detect that. Record
+a **fingerprint** entry per source file — the hash, never the contents, so it costs nothing — and
+declare it as the derivation's `derived_from` parent:
+
+```
+cache_set(model: "source-fingerprint", prompt: "<path>", response: "<sha256>", ttl_seconds: null)
+```
+
+On a later session, re-hash the file and compare. If it moved,
+`cache_invalidate(<fingerprint id>, cascade: true)` removes everything derived from it and leaves
+derivations from untouched sources alone. `src/niche.test.ts` pins this behaviour.
+
 When unsure, prefer under-caching: a missed opportunity costs little, while a wrongly-served stale
 result costs correctness.
 
