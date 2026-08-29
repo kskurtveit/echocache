@@ -110,7 +110,7 @@ export function createServer(db: Database.Database, config: Partial<Config> = {}
             inputSchema: z.object({
                 text: z.string().describe('Text to search for semantically related cache entries'),
                 top_k: z.number().int().positive().optional().describe('Max results, default 5'),
-                min_similarity: z.number().min(0).max(1).optional().describe('Similarity floor 0-1, default 0.5')
+                min_similarity: z.number().min(0).max(1).optional().describe('Similarity floor 0-1, default 0.3')
             })
         },
         async ({ text, top_k, min_similarity }) =>

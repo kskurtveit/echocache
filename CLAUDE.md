@@ -8,21 +8,22 @@ nowhereman is a Model Context Protocol server exposing a cache with two lookup p
   response, with HTTP-style `ttl_seconds` / `stale_while_revalidate_seconds` freshness, mirroring
   `Cache-Control` semantics.
 - **Similarity graph** (`cache_query` / `cache_related`): every entry is a node; nodes whose
-  content embeddings are above a cosine-similarity threshold are auto-linked with a `similar`
-  edge (feature-hashed bag-of-words vectors — see `src/embed.ts` — deliberately not a neural
-  embedding model, since pulling one in would cost more than the work the cache is trying to
-  save). `derived_from` at write time adds explicit `derived-from` edges, which
+  content embeddings are above a similarity threshold are auto-linked with a `similar`
+  edge (sparse feature-hashed bag-of-words vectors, IDF-weighted at scoring time — see
+  `src/embed.ts` — deliberately not a neural embedding model, since pulling one in would cost
+  more than the work the cache is trying to save). `derived_from` at write time adds explicit `derived-from` edges, which
   `cache_invalidate(cascade: true)` walks to clean up dependents.
 
 ## Layout
 
-- `src/embed.ts` — local text embedding (feature hashing) + cosine similarity, no external deps or network.
+- `src/embed.ts` — local text embedding (sparse feature hashing) + IDF-weighted scoring, no external deps or network.
 - `src/config.ts` — env-var configuration with validation; `loadConfig()` throws on bad input.
-- `src/db.ts` — SQLite schema (`nodes`, `edges`, `stats`) via better-sqlite3.
+- `src/db.ts` — SQLite schema (`nodes`, `edges`, `stats`, `doc_freq`) via better-sqlite3.
 - `src/store.ts` — cache/graph logic: key hashing, freshness computation, similarity linking, BFS traversal, eviction.
 - `src/server.ts` — MCP tool registration (`@modelcontextprotocol/server`), wires tools to `CacheStore`.
 - `src/index.ts` — stdio entrypoint.
-- `src/*.test.ts` — `node:test` suites, run via `tsx --test`.
+- `src/*.test.ts` — `node:test` suites, run via `tsx --test`. `retrieval.test.ts` pins search
+  quality at the shipped defaults; see Testing below.
 
 ## Running
 
@@ -43,7 +44,7 @@ All settings are environment variables, read once at startup by `loadConfig()`:
 | `NOWHEREMAN_MAX_ENTRIES` | `10000` | LRU ceiling on retained entries |
 | `NOWHEREMAN_MAX_BYTES` | `268435456` (256MB) | LRU ceiling on retained response bytes |
 | `NOWHEREMAN_DEFAULT_TTL_SECONDS` | `86400` (1 day) | Freshness lifetime when a caller omits one |
-| `NOWHEREMAN_SIMILARITY_THRESHOLD` | `0.85` | Cosine floor for auto-linking a `similar` edge |
+| `NOWHEREMAN_SIMILARITY_THRESHOLD` | `0.25` | Similarity floor for auto-linking a `similar` edge |
 | `NOWHEREMAN_LINK_CANDIDATE_POOL` | `500` | Recent entries a new write is compared against |
 | `NOWHEREMAN_ENCRYPTION_KEY` | unset | 64 hex chars (32 bytes); enables at-rest encryption |
 
@@ -71,8 +72,13 @@ pattern is passed through literally and the run fails with "Could not find". Lea
 lets the shell expand it, which works on both supported versions. This also means test files must
 stay flat in `src/`; a nested one would be silently skipped.
 
-When a similarity assertion fails, check the real cosine value before adjusting the test — the
-threshold is 0.85 and near-miss phrasings often land just under it.
+`retrieval.test.ts` is the calibration suite: it runs at the **shipped defaults**, with no
+threshold overrides, over long documents and short queries. Every threshold in `embed.ts` and
+`config.ts` was chosen from measurements against it, so when a similarity assertion fails, check
+the real score before adjusting a threshold — and never "fix" a retrieval test by passing it a
+lower `minSimilarity` than a real caller gets. That is precisely how the original defaults came
+to be unusable while 89 tests passed: the auto-link test compared near-duplicates with identical
+responses, and the query test overrode the floor to 0.3 when the shipped default was 0.5.
 
 ## Registering with a host
 
@@ -93,8 +99,11 @@ Any other MCP-capable host takes the same launch command; only the config file d
 - No comments beyond a rare one-liner for non-obvious *why*.
 - `stdout` is the JSON-RPC channel — never `console.log`; use `console.error` for anything diagnostic.
 - Keep `src/embed.ts` dependency-free; if real semantic embeddings are ever needed, add them as a
-  swappable second implementation behind the same `embed()` / `cosineSimilarity()` interface
-  rather than replacing it.
+  swappable second implementation behind the same `embed()` / `documentSimilarity()` /
+  `queryScore()` interface rather than replacing it.
+- Document frequency (`doc_freq`) must stay in step with `nodes`. Every path that adds or removes
+  an entry — write, overwrite, eviction, invalidate — adjusts it, and `store.test.ts` asserts the
+  stored counts equal a from-scratch recount. Drift there silently degrades every later score.
 - A cache failure must surface as an `isError` tool result, never as a silent miss — a miss tells
   the model "go do the work," which is safe; fabricated or swallowed errors are not. `guard()` in
   `src/server.ts` enforces this.
