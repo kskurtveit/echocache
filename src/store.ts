@@ -278,7 +278,10 @@ export class CacheStore {
         }
 
         bump(this.db, 'hits');
-        bump(this.db, 'tokens_saved', row!.estimated_tokens);
+        // What this hit handed back — not a claim about what it saved. Serving a cached file
+        // read costs the caller the same tokens as reading the file, so the two are only the
+        // same number when the entry stands in for work that would otherwise be regenerated.
+        bump(this.db, 'tokens_served', row!.estimated_tokens);
         this.db
             .prepare('UPDATE nodes SET hit_count = hit_count + 1, last_accessed_at = ? WHERE id = ?')
             .run(now, row!.id);
@@ -548,7 +551,7 @@ export class CacheStore {
         misses: number;
         sets: number;
         hitRate: number;
-        estimatedTokensSaved: number;
+        tokensServed: number;
         evictions: number;
         bytesStored: number;
         topEntries: { id: string; model: string; prompt: string; hitCount: number }[];
@@ -562,7 +565,7 @@ export class CacheStore {
         const misses = getStat(this.db, 'misses');
         const sets = getStat(this.db, 'sets');
         const evictions = getStat(this.db, 'evictions');
-        const estimatedTokensSaved = getStat(this.db, 'tokens_saved');
+        const tokensServed = getStat(this.db, 'tokens_served');
         const topEntries = this.db
             .prepare<[], { id: string; model: string; prompt: string; hit_count: number }>(
                 'SELECT id, model, prompt, hit_count FROM nodes ORDER BY hit_count DESC LIMIT 5'
@@ -576,7 +579,7 @@ export class CacheStore {
             misses,
             sets,
             hitRate: hits + misses === 0 ? 0 : hits / (hits + misses),
-            estimatedTokensSaved,
+            tokensServed,
             evictions,
             bytesStored,
             topEntries

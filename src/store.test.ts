@@ -357,12 +357,23 @@ describe('stats', () => {
         assert.equal(store.stats().hitRate, 0.5);
     });
 
-    test('accumulates estimated tokens saved only on hits', () => {
+    test('accumulates tokens served only on hits', () => {
         const store = newStore();
         store.set({ model: 'm', prompt: 'p', response: 'x'.repeat(400) });
-        assert.equal(store.stats().estimatedTokensSaved, 0, 'a set alone saves nothing');
+        assert.equal(store.stats().tokensServed, 0, 'a set alone serves nothing');
         store.get('m', 'p');
-        assert.equal(store.stats().estimatedTokensSaved, 100, '400 chars ≈ 100 tokens');
+        assert.equal(store.stats().tokensServed, 100, '400 chars ≈ 100 tokens');
+    });
+
+    test('counts what was served, not what an entry might have cost to produce', () => {
+        const store = newStore();
+        store.set({ model: 'm', prompt: 'p', response: 'x'.repeat(400) });
+        store.get('m', 'p');
+        store.get('m', 'p');
+        // Two hits, each handing back the same 100 tokens. The cache cannot know what
+        // producing this entry cost, so it reports only the quantity it can observe.
+        assert.equal(store.stats().tokensServed, 200);
+        assert.equal('estimatedTokensSaved' in store.stats(), false, 'must not claim savings it cannot know');
     });
 });
 

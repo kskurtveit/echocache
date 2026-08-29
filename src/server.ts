@@ -157,9 +157,10 @@ export function createServer(db: Database.Database, config: Partial<Config> = {}
         'cache_stats',
         {
             description:
-                'Cache analytics: entry/edge counts, hit rate, and an estimated token count saved by serving ' +
-                'from cache instead of re-calling a model. Useful for judging whether caching is actually ' +
-                'paying off in a given session.',
+                'Cache analytics: entry/edge counts, hit rate, and tokensServed — the token count handed ' +
+                'back from cache. Note that tokensServed equals tokens *saved* only for entries that stand ' +
+                'in for work which would otherwise be regenerated; serving a cached file read costs the ' +
+                'same tokens as re-reading the file, so it saves nothing.',
             inputSchema: z.object({})
         },
         async () => guard('cache_stats', () => store.stats())

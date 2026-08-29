@@ -1,6 +1,6 @@
 ---
 name: nowhereman-cache
-description: Use the nowhereman MCP cache (cache_get/cache_set/cache_query/cache_related/cache_invalidate) before and after any expensive, repeatable read — file reads, greps, web fetches/searches, doc lookups — so the result can be reused later instead of redone. Trigger before re-reading a file or re-running a search that may already be cached, and after producing a result worth keeping. Do NOT trigger for stateful or live-state checks (git status, test runs, health checks, git push) or anything with side effects.
+description: Use the nowhereman MCP cache (cache_get/cache_set/cache_query/cache_related/cache_invalidate) around work that is expensive to PRODUCE and safe to reuse — long generations, multi-step reasoning chains, derived analyses and summaries, expensive API results — so it need not be regenerated later. Trigger before starting such work, and after producing a result worth keeping. Do NOT trigger for plain file reads, greps or globs: serving those from cache costs the same tokens as redoing them, so the write is pure overhead. Do NOT trigger for stateful or live-state checks (git status, test runs, health checks, git push) or anything with side effects.
 ---
 
 # nowhereman cache protocol
@@ -10,13 +10,13 @@ freshness (`cache_get`/`cache_set`), plus a similarity graph for semantic recall
 (`cache_query`/`cache_related`) and dependency-aware invalidation (`cache_invalidate`).
 Full tool reference: `AGENTS.md` in this repo.
 
-## Before doing read-only, repeatable work
+## Before doing expensive, reusable work
 
-Call `cache_get(model, prompt, params)` first, where `model` is the tool/operation name
-(`"Read"`, `"Grep"`, `"WebFetch"`, ...) and `prompt` is the normalized target (file path, query,
-URL).
+Call `cache_get(model, prompt, params)` first, where `model` names the operation that produced the
+result (`"summarize"`, `"analyze-schema"`, `"claude-opus-5"`, ...) and `prompt` is the normalized
+description of what was asked.
 
-- `hit: true, entry.fresh: true` → use `entry.response`, skip the real read.
+- `hit: true, entry.fresh: true` → use `entry.response`, skip the real work.
 - `hit: true, entry.stale: true` → usable but past TTL; use it if adequate or refresh it.
 - `hit: false` → do the real work, then store it (next section).
 
@@ -38,20 +38,25 @@ what's being stored. Worth mentioning to the user; not worth reacting to on a si
 
 Skip `cache_get`/`cache_set` entirely for:
 
+- **Plain re-reads: file reads, greps, globs.** Writing an entry means emitting its whole content
+  as a `cache_set` argument, and reading it back costs the same tokens the original read did. A
+  cached file read therefore saves nothing and the write is pure overhead. Cache what you
+  *concluded* from a file — the analysis, the summary, the answer — never the file itself.
 - Anything whose purpose is telling you *current* state: `git status`, `git push`, test runs,
   health checks, deploy/build output.
 - Anything with side effects.
-- Generic shell/Bash execution by default — only cache a specific Bash invocation if you've
-  confirmed it's a pure, idempotent read (e.g. `cat` of a file that won't change).
+- Generic shell/Bash execution by default.
 - **Secrets.** Never `cache_set` API keys, tokens, credentials, or private key material, and
-  don't cache a file read whose content is a secrets file. Entries are written to a local
-  database; permissions are owner-only and contents can be encrypted at rest, but neither makes
+  don't cache content drawn from a secrets file. Entries are written to a local database;
+  permissions are owner-only and contents can be encrypted at rest, but neither makes
   deliberately caching a credential safe. Re-reading the source is cheaper than leaking it.
 
-Measured on real session replay: read-only lookups (Read/Grep/Glob/WebFetch) landed a genuine
-~13% hit rate on unchanged content; blindly caching literal-repeat shell commands mostly just
-re-served stale `git status`/`git push` output. When unsure, skip caching — a missed opportunity
-costs tokens, a stale cache hit costs correctness.
+Two separate tests, and an entry must pass both: **safe to reuse** (it won't be stale) and **worth
+caching** (reproducing it would cost real generation). Session-log replay showed why both are
+needed — literal-repeat shell commands were mostly `git status`/`git push`, unsafe to reuse, while
+file reads were perfectly safe to reuse and still not worth caching, because a hit hands back
+exactly the tokens the read would have. When unsure, skip: a missed opportunity costs little, a
+stale hit costs correctness.
 
 ## When a cache tool returns an error
 
@@ -64,5 +69,7 @@ about.
 
 ## Checking whether it's helping
 
-Use the `nowhereman-gain` skill, or call `cache_stats` directly, to see hit rate and estimated
-tokens saved.
+Use the `nowhereman-gain` skill, or call `cache_stats` directly, to see hit rate and
+`tokensServed` — the tokens handed back from cache. Read it carefully: `tokensServed` equals
+tokens *saved* only for entries that stand in for work which would otherwise be regenerated. A
+cache full of file reads reports a large `tokensServed` while saving nothing.

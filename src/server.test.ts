@@ -157,10 +157,10 @@ describe('cache_stats over MCP', () => {
         const stats = payload(await call('cache_stats'));
         assert.equal(stats.entries, 0);
         assert.equal(stats.hitRate, 0);
-        assert.equal(stats.estimatedTokensSaved, 0);
+        assert.equal(stats.tokensServed, 0);
     });
 
-    test('tracks hits, misses and token savings through the tool surface', async () => {
+    test('tracks hits, misses and tokens served through the tool surface', async () => {
         await call('cache_set', { model: 'm', prompt: 'p', response: 'x'.repeat(400) });
         await call('cache_get', { model: 'm', prompt: 'p' });
         await call('cache_get', { model: 'm', prompt: 'absent' });
@@ -169,7 +169,7 @@ describe('cache_stats over MCP', () => {
         assert.equal(stats.hits, 1);
         assert.equal(stats.misses, 1);
         assert.equal(stats.hitRate, 0.5);
-        assert.equal(stats.estimatedTokensSaved, 100);
+        assert.equal(stats.tokensServed, 100);
     });
 });
 

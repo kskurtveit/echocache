@@ -7,9 +7,11 @@ protocol below. If you're a human or agent working *on* this repo's code, see `C
 
 ## When to use it
 
-Before doing any expensive, repeatable piece of work — a long generation, a multi-step reasoning
-chain, a call to something you might end up redoing — check the cache first, then write the
-result back:
+Before doing any piece of work that is **expensive to produce** and safe to reuse — a long
+generation, a multi-step reasoning chain, an analysis you derived, an expensive API call — check
+the cache first, then write the result back. Note the emphasis: this cache pays off on work that
+would cost real generation to redo, not on work that is merely repeated. See "What's worth
+caching" below before routing anything through it.
 
 1. Call `cache_get` with the exact `(model, prompt, params)` you're about to run.
    - `hit: true`, `entry.fresh: true` → use `entry.response` directly, skip the real work.
@@ -26,29 +28,48 @@ result back:
    everything already known about a topic before starting new work.
 5. If you know a cached entry's source changed, call `cache_invalidate`. Pass `cascade: true` to
    also remove entries that declared it as a `derived_from` parent.
-6. `cache_stats` reports hit rate and estimated tokens saved — check it if asked how much the
-   cache is actually helping.
+6. `cache_stats` reports hit rate and `tokensServed` — check it if asked how much the cache is
+   actually helping. See the note under that tool below on what `tokensServed` does and does not
+   claim.
 
-## What's safe to cache
+## What's worth caching
 
-Not every repeated call is safe to serve from cache. Judge by whether the *tool* is idempotent —
-does it just read something, or does it check or change live state?
+Two questions, and an entry has to pass **both**. The first is about correctness, the second about
+whether the cache pays for itself at all.
 
-- **Cache freely**: read-only lookups over content that only changes when someone edits it — file
-  reads, greps/searches, web fetches, doc/API lookups. The default 1-day TTL is a reasonable
-  starting point; shorten it for anything volatile.
-- **Don't cache**: commands whose entire purpose is telling you *current* state — `git status`,
-  test runs, health checks, `git push`, anything with side effects. A hit there isn't a shortcut,
-  it's a stale-state bug. If a call's value is "what does the world look like right now," skip
-  `cache_get`/`cache_set` for it entirely — don't route generic shell/Bash execution through this
-  cache by default.
-- When unsure, prefer under-caching: a missed opportunity costs some tokens; a wrongly-served
-  stale result costs correctness.
+**1. Is it safe to reuse?** Would serving this from cache still be right minutes or hours later?
 
-This was validated by replaying real Claude Code session logs through this cache: read-only file
-lookups landed a genuine ~13% hit rate on re-reads of unchanged files, while naively caching every
-literal-repeat shell command mostly meant re-serving stale `git status` / `git push` output —
-redundant to run again, but actively wrong to cache.
+- **Yes**: results over content that only changes when someone edits it.
+- **No**: anything whose entire purpose is reporting *current* state — `git status`, test runs,
+  health checks, `git push`, anything with side effects. A hit there isn't a shortcut, it's a
+  stale-state bug. Skip `cache_get`/`cache_set` for these entirely, and don't route generic
+  shell/Bash execution through this cache by default.
+
+**2. Would reproducing it cost real generation?** This is the question that decides whether
+caching is worth doing, and it is easy to get backwards.
+
+Writing an entry means emitting its full content as a `cache_set` argument — tokens you generate,
+at output rates. Reading it back on a hit costs the same tokens as any other tool result. So:
+
+- **Worth caching**: results that were *expensive to produce* — a long generation, a multi-step
+  reasoning chain, an analysis or summary you derived, an expensive API result. Regenerating these
+  would cost output tokens plus the reasoning behind them, so a single hit already pays for the
+  write.
+- **Not worth caching**: results that are merely *re-read*. A cached file read hands back exactly
+  the tokens that reading the file would have, so it saves nothing and the write cost is pure
+  overhead. The same goes for greps and globs. Cache what you *concluded* from a file, not the
+  file.
+- **In between**: web fetches and doc lookups. Cheap enough to redo that the raw page rarely earns
+  its write — but a distilled answer drawn from several of them usually does.
+
+When unsure, prefer under-caching: a missed opportunity costs little, while a wrongly-served stale
+result costs correctness.
+
+Replaying real Claude Code session logs through this cache showed both halves of this. Literal
+repeat shell commands were mostly `git status` / `git push` — redundant to run again but actively
+wrong to cache. Read-only file lookups were safe to reuse and landed a ~13% hit rate on unchanged
+files, but that figure measures *hit rate only*: at 13%, re-emitting every file read to buy hits
+that save no tokens is a straight loss. Safe to cache and worth caching are different tests.
 
 ## Tools
 
@@ -59,7 +80,7 @@ redundant to run again, but actively wrong to cache.
 | `cache_query`       | Semantic search across all cached entries                                |
 | `cache_related`     | Graph traversal from one entry to entries linked to it                   |
 | `cache_invalidate`  | Delete an entry, optionally cascading to its dependents                  |
-| `cache_stats`       | Hit rate and estimated token savings                                     |
+| `cache_stats`       | Hit rate and `tokensServed` (see caveat under "What's worth caching")     |
 
 ## Secrets
 

@@ -107,6 +107,11 @@ Any other MCP-capable host takes the same launch command; only the config file d
 - A cache failure must surface as an `isError` tool result, never as a silent miss — a miss tells
   the model "go do the work," which is safe; fabricated or swallowed errors are not. `guard()` in
   `src/server.ts` enforces this.
+- `cache_stats` reports `tokensServed`, not "tokens saved". The cache knows what it handed back;
+  it cannot know what producing that entry cost, and the two differ sharply — serving a cached
+  file read costs the caller exactly what re-reading would, so it saves nothing. The stat was
+  called `estimatedTokensSaved` and vouched for a usage pattern that loses tokens. Don't
+  reintroduce a savings figure unless callers declare production cost at `cache_set` time.
 - Never `SELECT *` from `nodes` in a hot path — `response` bodies dominate row size, so scoring
   and scanning queries select `id, embedding` and fetch full rows only for the winners.
 

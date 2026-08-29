@@ -40,7 +40,7 @@ claude mcp add nowhereman -- npx tsx /path/to/nowhereman/src/index.ts
 | `cache_query`       | Semantic search across all cached entries                                |
 | `cache_related`     | Graph traversal from one entry to entries linked to it                   |
 | `cache_invalidate`  | Delete an entry, optionally cascading to its dependents                  |
-| `cache_stats`       | Hit rate and estimated token savings                                     |
+| `cache_stats`       | Hit rate and tokens served from cache                                    |
 
 Data persists to SQLite at `$NOWHEREMAN_DB_PATH` (default `~/.nowhereman/cache.db`), shared
 across every project that registers the server.
