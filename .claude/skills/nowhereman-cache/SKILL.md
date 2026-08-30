@@ -40,6 +40,19 @@ To keep a derivation honest, store a **fingerprint** entry per source file (`mod
 `cache_invalidate(<fingerprint id>, cascade: true)` drops everything derived from it and spares
 the rest. A TTL cannot detect a source change; this can.
 
+## Dispatching parallel agents over the same material
+
+Measured: eight subagents reviewing one repository each read the same large file cold — 60% of
+their reads duplicated another agent's, ~243k redundant tokens. Caching the *file* recovers none
+of it (the bytes still enter each context, so a hit costs what the read cost, and re-emitting it
+to write makes the dispatch 63% *more* expensive). Sharing a *derivation* cut the same workload by
+~79%.
+
+So: have one agent read and derive, `cache_set` that, and point the rest at it. Give the
+derivation file paths and line numbers so a follower can read the exact part it needs instead of
+the whole file. Followers should reach for `cache_query`, not `cache_get` — they will not phrase
+it the way the lead did.
+
 ## After doing the work
 
 Call `cache_set` with the prompt/result and a TTL appropriate to how often the source changes

@@ -91,6 +91,36 @@ cache_set(model: "orient",
 Ask with `cache_query` rather than `cache_get` when starting: a later session rarely phrases the
 question the same way, and semantic recall is what makes the entry findable at all.
 
+### Fan-out: dispatching parallel agents over the same material
+
+The measured case, and the one where most of the waste actually is. Eight subagents reviewing one
+Go repository each read `pkg/fuse/fuse.go` cold; across the dispatch **60% of all reads were of a
+file another subagent had already read**, about 243,000 redundant tokens.
+
+Caching the *files* recovers none of that. The bytes still have to enter each agent's context, so
+a hit costs what the read cost — and if an agent re-emits the file to write it, the dispatch ends
+up **more** expensive than doing nothing. Sharing a *derivation* does recover it. On that file:
+
+| approach | weighted tokens | vs. doing nothing |
+|---|---|---|
+| each agent reads the file | 125,864 | — |
+| cache the file, agent re-emits it to write | 204,529 | **+63% worse** |
+| cache the file, server reads it from disk | 125,864 | 0% — saves nothing |
+| share a derivation, read source only where needed | 21,601 | **−83%** |
+| …and each agent still reads one function after | 26,851 | **−79%** |
+
+(Weighted as `input + 5 × output`, since output costs 5× input.)
+
+So when dispatching parallel agents over shared material: have **one** agent read and derive,
+`cache_set` the derivation, and give the rest the entry to start from. They read source only where
+they need exact detail — which is why a derivation should carry line numbers and file paths rather
+than trying to replace the code. Followers should use `cache_query`, since they will not phrase
+the question the way the lead did.
+
+Contexts in a dispatch are alive at the same time, and a write from one is immediately visible to
+the others; `src/niche.test.ts` pins that, and separate parallel processes were verified to write
+a shared cache without loss or contention.
+
 ### Keeping a derivation honest about its sources
 
 A derivation goes wrong when its source changes underneath it, and a TTL cannot detect that. Record

@@ -105,6 +105,66 @@ describe('a derivation outliving the session that produced it', () => {
     });
 });
 
+describe('fan-out: many cold contexts sharing one derivation', () => {
+    /**
+     * The measured case. Eight subagents dispatched over one repository each read
+     * `pkg/fuse/fuse.go` cold — 60% of all their reads were of a file another had already read,
+     * ~243k redundant tokens across the dispatch.
+     *
+     * Caching the *file* cannot recover any of it: the bytes still have to enter each agent's
+     * context, so a hit costs what the read did. Sharing a *derivation* does: 15,733 tokens of
+     * source against a 489-token orientation, ~79% cheaper across eight agents even when each
+     * still reads one function afterwards.
+     *
+     * Unlike the cross-session case, these contexts are alive at the same time, so what matters
+     * is that a write from one is immediately visible to the others.
+     */
+    test('a derivation written by one live context is visible to others already open', () => {
+        const dbPath = join(dir, 'cache.db');
+        const lead = openDb(dbPath);
+        const followers = [openDb(dbPath), openDb(dbPath), openDb(dbPath)];
+
+        try {
+            // Every follower is already open *before* the lead writes, as a real dispatch is.
+            const leadStore = new CacheStore(lead);
+            const followerStores = followers.map(db => new CacheStore(db));
+
+            leadStore.set({
+                model: 'orient',
+                prompt: 'pkg/fuse/fuse.go: locking and concurrency surface',
+                response: ORIENTATION,
+                ttlSeconds: null
+            });
+
+            for (const store of followerStores) {
+                const found = store.query('what guards concurrent access in the fuse layer');
+                assert.ok(found.length > 0, 'a follower could not see the lead context write');
+            }
+        } finally {
+            lead.close();
+            for (const db of followers) db.close();
+        }
+    });
+
+    test('concurrent writes from several open contexts all land', () => {
+        const dbPath = join(dir, 'cache.db');
+        const dbs = Array.from({ length: 6 }, () => openDb(dbPath));
+
+        try {
+            const stores = dbs.map(db => new CacheStore(db));
+            // Interleaved across connections, the way parallel agents reporting findings would be.
+            for (let round = 0; round < 4; round++) {
+                stores.forEach((store, i) =>
+                    store.set({ model: 'agent', prompt: `angle ${i} round ${round}`, response: 'finding body' })
+                );
+            }
+            assert.equal(stores[0]!.stats().entries, 24, 'writes were lost under concurrent connections');
+        } finally {
+            for (const db of dbs) db.close();
+        }
+    });
+});
+
 describe('noticing the source moved under a derivation', () => {
     test('a changed source file invalidates what was derived from it, and nothing else', () => {
         const dbPath = join(dir, 'cache.db');
