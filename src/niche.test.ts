@@ -157,17 +157,17 @@ describe('the case grep cannot answer: cached research and judgment calls', () =
 
 describe('fan-out: many cold contexts sharing one derivation', () => {
     /**
-     * The measured case. Eight subagents dispatched over one repository each read
-     * `pkg/fuse/fuse.go` cold — 60% of all their reads were of a file another had already read,
-     * ~243k redundant tokens across the dispatch.
+     * Fan-out over shared source turned out narrower than first measured: agents already grep
+     * and read slices rather than whole files, so a cached *map of where things live* competes
+     * with grep and loses (measured 27% worse in a real dispatch; see AGENTS.md). What still pays
+     * in a fan-out is the same flagship case as everywhere else — a cached *research or judgment*
+     * conclusion (728x cheaper to serve than to reproduce, measured from real usage) — just
+     * shared with several live agents instead of a later session.
      *
-     * Caching the *file* cannot recover any of it: the bytes still have to enter each agent's
-     * context, so a hit costs what the read did. Sharing a *derivation* does: 15,733 tokens of
-     * source against a 489-token orientation, ~79% cheaper across eight agents even when each
-     * still reads one function afterwards.
-     *
-     * Unlike the cross-session case, these contexts are alive at the same time, so what matters
-     * is that a write from one is immediately visible to the others.
+     * That shared-live-agents shape needs something the cross-session case never did: several
+     * contexts open on the cache *at the same time*. This pins the two properties that depend on
+     * — a write from one live context is visible to others already open, and concurrent writes
+     * don't race-lose.
      */
     test('a derivation written by one live context is visible to others already open', () => {
         const dbPath = join(dir, 'cache.db');

@@ -1,9 +1,11 @@
 # nowhereman — MCP caching tool
 
-This project ships the `nowhereman` MCP server: a response cache with HTTP-style freshness
-semantics, plus a similarity graph for semantic recall of related past results. If you are an
-agent with `nowhereman`'s tools available (registered under this or another project), follow the
-protocol below. If you're a human or agent working *on* this repo's code, see `CLAUDE.md` too.
+This project ships the `nowhereman` MCP server: a **cache for LLM responses**, keyed like an HTTP
+cache and read like a knowledge graph — `cache_get`/`cache_set` behave like `Cache-Control`
+freshness against `(model, prompt, params)`, and `cache_query`/`cache_related` add semantic recall
+of related past results. If you are an agent with `nowhereman`'s tools available (registered under
+this or another project), follow the protocol below. If you're a human or agent working *on* this
+repo's code, see `CLAUDE.md` too.
 
 ## When to use it
 
@@ -61,6 +63,11 @@ at output rates. Reading it back on a hit costs the same tokens as any other too
   file.
 - **In between**: web fetches and doc lookups. Cheap enough to redo that the raw page rarely earns
   its write — but a distilled answer drawn from several of them usually does.
+
+`cache_stats`'s `tokensServed` follows directly from this: it counts what the cache handed back,
+which equals tokens *saved* only for entries that pass test 2. A cache full of file reads reports
+a large, entirely fake savings figure — that is precisely why the field is named `tokensServed`
+and not `tokensSaved`.
 
 ### The case with real numbers behind it: research and judgment calls
 

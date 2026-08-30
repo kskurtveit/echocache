@@ -17,7 +17,7 @@ Call the `cache_stats` tool and present the result as a short report:
   meaning — the case this cache is for — `cache_query` is the primary path, and a cache can show
   a poor exact-match hit rate while working exactly as intended.
 - **Tokens served** — `tokensServed`, the running total handed back across every `cache_get` hit
-  (from each entry's response length at ~4 chars/token).
+  and every `cache_query` recall (from each entry's response length at ~4 chars/token).
 - **Evictions** — `evictions`, entries dropped to stay under the configured ceilings. A large
   number relative to `sets` means the cache is thrashing: it's evicting things about as fast as
   it stores them, so raising `NOWHEREMAN_MAX_ENTRIES` / `NOWHEREMAN_MAX_BYTES` would likely lift

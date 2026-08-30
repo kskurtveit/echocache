@@ -14,6 +14,14 @@ nowhereman is a Model Context Protocol server exposing a cache with two lookup p
   more than the work the cache is trying to save). `derived_from` at write time adds explicit `derived-from` edges, which
   `cache_invalidate(cascade: true)` walks to clean up dependents.
 
+The product this exists to be: **a cached LLM response** for work that was expensive to *produce* —
+a research chain, a derived judgment, a long generation — never a cached file read, which costs a
+hit the same tokens the read would have cost anyway and so can't pay off at any hit rate. That
+distinction, not a feature list, is why retrieval quality gets the amount of scrutiny it does below
+(`niche.test.ts`, `retrieval.test.ts`): a response cache is only worth running if `cache_query`
+actually finds the thing later, worded differently than it was written. See `AGENTS.md` for the
+full case, including what's measured and what isn't yet.
+
 ## Layout
 
 - `src/embed.ts` — local text embedding (sparse feature hashing) + IDF-weighted scoring, no external deps or network.
@@ -133,11 +141,18 @@ pattern is passed through literally and the run fails with "Could not find". Lea
 lets the shell expand it, which works on both supported versions. This also means test files must
 stay flat in `src/`; a nested one would be silently skipped.
 
-`niche.test.ts` pins the use case the product is *for*: a derivation outliving the session that
-produced it, recalled later by different wording, with fingerprint parents so a changed source can
-cascade-invalidate what was derived from it. If a change breaks these, the cache no longer does
-the one thing it is worth running for — measured at ~28x fewer tokens than re-reading `express/lib`
-(15,504 → 549). Caching file reads is *not* in scope and saves nothing; see `AGENTS.md`.
+`niche.test.ts` pins the cases this product actually stands on, in order of how well-validated
+each is. Strongest: a cached research/judgment conclusion recalled correctly and outranking an
+unrelated entry that shares surface vocabulary — the precision property behind the measured 728x
+gap between reproducing a real 22-tool-call research chain (37,119 output tokens, from this
+project's own history) and serving its 255-token conclusion back. Narrower: a derivation outliving
+the session that produced it, recalled by different wording, with fingerprint parents so a changed
+source can cascade-invalidate what was derived from it — measured at ~28x on `express/lib`, but
+only pays when the later need is broad understanding rather than one answer. Also covered: fan-out
+across live concurrent contexts, and that concurrent writes don't get lost. If a change breaks any
+of these, the cache no longer does the thing it's worth running for. Caching file reads or
+locating code is *not* in scope and does not pay at any hit rate; see `AGENTS.md` for the full
+case, including the fan-out measurement that shows why a cached map loses to grep.
 
 `retrieval.test.ts` is the calibration suite: it runs at the **shipped defaults**, with no
 threshold overrides, over long documents and short queries. Every threshold in `embed.ts` and

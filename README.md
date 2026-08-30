@@ -1,8 +1,10 @@
 # nowhereman
 
-An MCP caching server — for the agent who doesn't know where it's going to, but doesn't need to
-redo the last mile of work to get there. ("He's a real nowhere man... doesn't have a point of
-view" — but he does have a cache.)
+An MCP server for a **cached LLM response** — the way an HTTP cache caches an expensive server
+response, not the way a browser caches a static asset. `cache_get` checks `(model, prompt,
+params)` against a cache key before you pay to regenerate the answer yourself; for the agent who
+doesn't know where it's going to, but doesn't need to redo the last mile of work to get there.
+("He's a real nowhere man... doesn't have a point of view" — but he does have a cache.)
 
 Two lookup paths, inspired by two different kinds of caching:
 
@@ -87,7 +89,7 @@ claude mcp add nowhereman -- npx tsx /path/to/nowhereman/src/index.ts
 | `cache_query`       | Semantic search across all cached entries                                |
 | `cache_related`     | Graph traversal from one entry to entries linked to it                   |
 | `cache_invalidate`  | Delete an entry, optionally cascading to its dependents                  |
-| `cache_stats`       | Hit rate and tokens served from cache                                    |
+| `cache_stats`       | Exact-match hit rate, `queryHits`/`queryMisses`, and tokens served       |
 
 Data persists to SQLite at `$NOWHEREMAN_DB_PATH` (default `~/.nowhereman/cache.db`), shared
 across every project that registers the server.
