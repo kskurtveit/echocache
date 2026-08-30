@@ -65,4 +65,12 @@ describe('config', () => {
         process.env.NOWHEREMAN_SIMILARITY_THRESHOLD = '1';
         assert.equal(loadConfig().similarityThreshold, 1);
     });
+
+    test('rejects a link candidate pool of zero rather than silently disabling auto-linking', () => {
+        // Unlike maxEntries/maxBytes, 0 here isn't a plausible deliberate choice — it's a LIMIT
+        // in the linking query, so it turns off the whole similarity graph with no error, one
+        // typo away from similarityThreshold's loud validation for the same kind of mistake.
+        process.env.NOWHEREMAN_LINK_CANDIDATE_POOL = '0';
+        assert.throws(() => loadConfig(), /must be a positive number/);
+    });
 });

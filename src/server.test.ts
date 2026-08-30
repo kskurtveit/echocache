@@ -7,7 +7,9 @@ import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/cli
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import type Database from 'better-sqlite3';
 import { openDb } from './db.js';
-import { createServer } from './server.js';
+import { createServer, validateConfig } from './server.js';
+import { CacheStore } from './store.js';
+import { Cipher } from './crypto.js';
 
 let dir: string;
 let db: Database.Database;
@@ -189,5 +191,20 @@ describe('failure handling', () => {
         assert.equal((await call('cache_get', { model: 'm', prompt: 'p' })).isError, true);
         const { tools } = await client.listTools();
         assert.equal(tools.length, 6, 'server should stay connected and usable');
+    });
+});
+
+describe('validateConfig', () => {
+    test('does not throw for a database and config that createServer would accept', () => {
+        assert.doesNotThrow(() => validateConfig(db));
+    });
+
+    test('throws the same rejection createServer would, without building a full server', () => {
+        const key = Cipher.generateKeyHex();
+        new CacheStore(db, {}, Cipher.fromHex(key)).set({ model: 'm', prompt: 'p', response: 'r' });
+        assert.throws(
+            () => validateConfig(db, { encryptionKeyHex: Cipher.generateKeyHex() }),
+            /does not match/
+        );
     });
 });

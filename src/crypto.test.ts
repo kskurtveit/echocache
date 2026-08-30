@@ -159,6 +159,16 @@ describe('key / database mismatch', () => {
         assert.doesNotThrow(() => new CacheStore(db, {}, Cipher.fromHex(KEY)));
     });
 
+    test('a broken database fails loudly at construction rather than being read as "empty"', () => {
+        // migrateEmbeddings() also unconditionally queries `nodes` and would throw for the same
+        // reason regardless of what assertKeyMatchesDatabase does, masking whether this specific
+        // check is the one behaving correctly — so pre-stamp the embedding version to make that
+        // migration a no-op, isolating the failure to the row-count check this test targets.
+        db.prepare("INSERT INTO meta (key, value) VALUES ('embedding_version', '2')").run();
+        db.exec('DROP TABLE nodes');
+        assert.throws(() => new CacheStore(db, {}, Cipher.fromHex(KEY)), /no such table/);
+    });
+
     test('reopens cleanly with the correct key', () => {
         const path = join(dir, 'reopen.db');
         const first = openDb(path);

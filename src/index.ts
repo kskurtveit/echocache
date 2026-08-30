@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { serveStdio, type StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 import { loadConfig } from './config.js';
 import { openDb } from './db.js';
-import { createServer } from './server.js';
+import { createServer, validateConfig } from './server.js';
 
 /**
  * Closes the transport before the database, matching the SDK's own recommended shutdown order.
@@ -46,10 +46,12 @@ function main(): void {
         process.exit(1);
     }
 
-    // Build the server once up front so a bad key or a key/database mismatch fails loudly here,
-    // rather than surfacing as an error on the first tool call.
+    // Run the same checks a real connection would trigger — cipher parsing, key/database match,
+    // embedding migration — up front, so a bad key or mismatch fails loudly here rather than on
+    // the first tool call. validateConfig() does this without building a full McpServer, unlike
+    // calling createServer() twice (once to validate, once for real inside the stdio factory).
     try {
-        createServer(db, config);
+        validateConfig(db, config);
     } catch (err) {
         console.error(`[nowhereman] ${err instanceof Error ? err.message : String(err)}`);
         db.close();

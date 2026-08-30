@@ -24,6 +24,16 @@ function guard(label: string, fn: () => unknown): ToolResult {
     }
 }
 
+/**
+ * Runs the same startup checks createServer() would (cipher parsing, key/database match,
+ * embedding migration) without building the McpServer or registering tools — for validating a
+ * database once at startup before committing to the real, connection-scoped construction.
+ */
+export function validateConfig(db: Database.Database, config: Partial<Config> = {}): void {
+    const cipher = config.encryptionKeyHex ? Cipher.fromHex(config.encryptionKeyHex) : undefined;
+    new CacheStore(db, config, cipher);
+}
+
 export function createServer(db: Database.Database, config: Partial<Config> = {}): McpServer {
     const server = new McpServer({ name: 'nowhereman', version: '0.1.0' });
     const cipher = config.encryptionKeyHex ? Cipher.fromHex(config.encryptionKeyHex) : undefined;

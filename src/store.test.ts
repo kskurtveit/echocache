@@ -179,6 +179,40 @@ describe('freshness (TTL / stale-while-revalidate)', () => {
         assert.equal(store.stats().hits, 0);
         assert.equal(store.stats().misses, 1);
     });
+
+    test('cache_query does not surface an expired entry', () => {
+        const store = newStore();
+        const { id } = store.set({
+            model: 'm',
+            prompt: 'quarterly earnings summary',
+            response: 'Revenue grew 12%.',
+            ttlSeconds: 1
+        });
+        db.prepare('UPDATE nodes SET created_at = ? WHERE id = ?').run(Date.now() - 60_000, id);
+
+        const matches = store.query('quarterly earnings summary', { minSimilarity: 0 });
+
+        assert.equal(matches.length, 0, 'get() would refuse this entry as expired; query() must too');
+    });
+
+    test('cache_related does not surface an expired entry', () => {
+        const store = newStore();
+        // derived-from edges point child -> parent, so traversal has to start at the child to
+        // reach the (here, expired) parent.
+        const parent = store.set({ model: 'm', prompt: 'source', response: 'x', ttlSeconds: 1 });
+        const child = store.set({
+            model: 'm',
+            prompt: 'derived',
+            response: 'y',
+            ttlSeconds: null,
+            derivedFrom: [parent.id]
+        });
+        db.prepare('UPDATE nodes SET created_at = ? WHERE id = ?').run(Date.now() - 60_000, parent.id);
+
+        const related = store.related(child.id, { relation: 'derived-from' });
+
+        assert.equal(related.length, 0, 'get() would refuse the expired parent; related() must too');
+    });
 });
 
 describe('similarity graph', () => {

@@ -124,6 +124,15 @@ reusable regardless of which project asked for it.
 then least-recently-used entries until both ceilings are satisfied. Entries with `ttl_seconds:
 null` never expire but are still subject to the LRU ceilings.
 
+**Known scaling boundary, not yet a problem:** `enforceLimits()` runs its three passes (expiry,
+entry-count LRU, byte-ceiling LRU) as three separate table scans, and `corpusStats()`/`idfWeights()`
+rebuild a dense IDF array from a full `doc_freq` scan on every `set()` and `query()`. Both are
+O(entries) per call, capped by `NOWHEREMAN_MAX_ENTRIES` at 10,000 — fine at that scale, unmeasured
+above it. Folding the eviction passes into one, or maintaining IDF weights incrementally rather
+than recomputing them, would both add real correctness risk (eviction ordering, keeping
+incremental state from drifting from a full recount) to score against a performance problem that
+hasn't been shown to exist yet. Revisit with a measurement, not preemptively.
+
 ## Testing
 
 `npm test` runs every `src/**/*.test.ts` through `tsx --test` (`node:test`, no external runner):
@@ -208,7 +217,18 @@ Any other MCP-capable host takes the same launch command; only the config file d
   migration framework speculatively.
 - A cache failure must surface as an `isError` tool result, never as a silent miss — a miss tells
   the model "go do the work," which is safe; fabricated or swallowed errors are not. `guard()` in
-  `src/server.ts` enforces this.
+  `src/server.ts` enforces this — but only around a tool handler's body. It does not reach a
+  failure during server *construction*: `createServer`'s factory (passed to `serveStdio` in
+  production, and to `createMcpHandler` per-request in `server.test.ts`) can be re-invoked after
+  startup — a connection reconnecting, or a test harness serving one `McpServer` per request — and
+  an exception thrown building that instance is outside `guard()`'s reach, surfacing as a raw
+  transport failure rather than a clean `isError`. Found by removing an overly-broad catch in
+  `assertKeyMatchesDatabase` and watching `server.test.ts`'s "the server still answers other
+  requests after a failure" break — the fix was narrowing the check's scope so a genuine error
+  there stays rare enough not to matter (see the comment on that function), not widening `guard()`
+  to cover construction. If a future change makes server construction itself fail more often,
+  that gap gets real and needs its own fix — a construction failure would need to become a
+  synthetic `isError` result somehow, not just propagate.
 - `cache_stats` reports `tokensServed`, not "tokens saved". The cache knows what it handed back;
   it cannot know what producing that entry cost, and the two differ sharply — serving a cached
   file read costs the caller exactly what re-reading would, so it saves nothing. The stat was

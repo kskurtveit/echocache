@@ -194,18 +194,19 @@ export class CacheStore {
      */
     private assertKeyMatchesDatabase(): void {
         const stored = getMeta(this.db, ENCRYPTION_META_KEY);
-        // Only a key/state mismatch may fail here. An unrelated schema problem must fall through
-        // to the operation itself, where guard() turns it into a contained tool error instead of
-        // taking the whole server down.
-        let hasRows = false;
-        try {
-            hasRows = (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c > 0;
-        } catch {
-            hasRows = false;
-        }
 
         if (this.cipher) {
             if (stored === null) {
+                // First time encryption is being adopted on this database. A genuine failure
+                // checking for pre-existing cleartext rows must propagate rather than be read as
+                // "no rows" — silently proceeding here is exactly the "write plaintext into an
+                // encrypted cache" case this function exists to prevent. Deliberately scoped to
+                // just this branch: every *other* call to this function (no cipher, or a cipher
+                // matched against an already-stored verifier) has no use for this count, and
+                // running it unconditionally would mean any transient failure here — on any
+                // reconnection, encrypted or not — surfaces during server construction instead of
+                // inside a tool call, outside guard()'s protection.
+                const hasRows = (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c > 0;
                 if (hasRows) {
                     throw new Error(
                         'This cache database holds unencrypted entries but NOWHEREMAN_ENCRYPTION_KEY is set. ' +
@@ -487,7 +488,11 @@ export class CacheStore {
         for (const { id, sim } of scored) {
             const row = nodeQuery.get(id);
             if (!row) continue;
-            matches.push({ ...this.toEntry(row, now), similarity: sim });
+            const entry = this.toEntry(row, now);
+            // get() refuses an expired entry outright; query() must hold to the same freshness
+            // contract rather than let semantic recall be a back door around it.
+            if (entry.expired) continue;
+            matches.push({ ...entry, similarity: sim });
             // A recall is a use. Without recording it, an entry reachable only by meaning looks
             // untouched to enforceLimits() and is evicted first — precisely the entries this
             // cache exists to keep.
@@ -527,7 +532,11 @@ export class CacheStore {
                     visited.add(edge.to_id);
                     const row = nodeQuery.get(edge.to_id);
                     if (!row) continue;
-                    results.push({ ...this.toEntry(row, now), relation: edge.relation, weight: edge.weight, depth: d });
+                    const entry = this.toEntry(row, now);
+                    // Same freshness contract as get(): an expired node is refused, not
+                    // surfaced. It is still marked visited so traversal doesn't loop back to it.
+                    if (entry.expired) continue;
+                    results.push({ ...entry, relation: edge.relation, weight: edge.weight, depth: d });
                     next.push(edge.to_id);
                     if (results.length >= limit) break;
                 }

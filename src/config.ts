@@ -17,12 +17,12 @@ export interface Config {
     encryptionKeyHex: string | undefined;
 }
 
-function intFromEnv(name: string, fallback: number): number {
+function intFromEnv(name: string, fallback: number, min = 0): number {
     const raw = process.env[name];
     if (raw === undefined || raw.trim() === '') return fallback;
     const parsed = Number(raw);
-    if (!Number.isFinite(parsed) || parsed < 0) {
-        throw new Error(`${name} must be a non-negative number, got: ${raw}`);
+    if (!Number.isFinite(parsed) || parsed < min) {
+        throw new Error(`${name} must be a ${min > 0 ? 'positive' : 'non-negative'} number, got: ${raw}`);
     }
     return Math.floor(parsed);
 }
@@ -44,7 +44,7 @@ export function loadConfig(): Config {
         maxBytes: intFromEnv('NOWHEREMAN_MAX_BYTES', 256 * 1024 * 1024),
         defaultTtlSeconds: intFromEnv('NOWHEREMAN_DEFAULT_TTL_SECONDS', 60 * 60 * 24),
         similarityThreshold: floatFromEnv('NOWHEREMAN_SIMILARITY_THRESHOLD', 0.25, 0, 1),
-        linkCandidatePool: intFromEnv('NOWHEREMAN_LINK_CANDIDATE_POOL', 500),
+        linkCandidatePool: intFromEnv('NOWHEREMAN_LINK_CANDIDATE_POOL', 500, 1),
         encryptionKeyHex: process.env.NOWHEREMAN_ENCRYPTION_KEY?.trim() || undefined
     };
 }

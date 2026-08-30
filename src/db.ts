@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { chmodSync, existsSync, mkdirSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 /**
@@ -28,6 +28,12 @@ export function openDb(path: string): Database.Database {
     } catch {
         // Best effort: a filesystem that rejects chmod (e.g. some mounts) is not fatal.
     }
+    // Create the file at 0600 up front, rather than letting better-sqlite3 create it under the
+    // process's default umask and chmod-ing it after: `open()` applies the given mode to a file
+    // it actually creates (never loosening it, only ever narrowing it further under a stricter
+    // umask), so this leaves no window where a brand-new database is briefly group/world
+    // readable. A no-op if the file already exists.
+    if (!existsSync(path)) closeSync(openSync(path, 'a', 0o600));
     const db = new Database(path);
     restrictPermissions(path);
     db.pragma('journal_mode = WAL');
