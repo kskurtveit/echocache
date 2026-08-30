@@ -93,72 +93,39 @@ question the same way, and semantic recall is what makes the entry findable at a
 
 ### Fan-out: dispatching parallel agents over the same material
 
-The measured case, and the one where most of the waste actually is. Eight subagents reviewing one
-Go repository each read `pkg/fuse/fuse.go` cold; across the dispatch **60% of all reads were of a
-file another subagent had already read**, about 243,000 redundant tokens.
+Parallel agents over one repository do duplicate a lot of reading. Measured across 30 subagents in
+a real code-review dispatch, counting the bytes tool results actually returned: **374,000 tokens of
+content that a sibling agent had already pulled into its own context**.
 
-Caching the *files* recovers none of that. The bytes still have to enter each agent's context, so
-a hit costs what the read cost — and if an agent re-emits the file to write it, the dispatch ends
-up **more** expensive than doing nothing. Sharing a *derivation* does recover it. On that file:
+That number is real, and mostly *not* recoverable by this cache. Two measurements say so.
 
-| approach | weighted tokens | vs. doing nothing |
-|---|---|---|
-| each agent reads the file | 125,864 | — |
-| cache the file, agent re-emits it to write | 204,529 | **+63% worse** |
-| cache the file, server reads it from disk | 125,864 | 0% — saves nothing |
-| share a derivation, read source only where needed | 21,601 | **−83%** |
-| …and each agent still reads one function after | 26,851 | **−79%** |
+**Agents already read narrowly.** Of 166 `Read` calls in that dispatch, **127 used `offset`/`limit`** —
+they grep first and pull a slice. Eight agents touched `pkg/fuse/fuse.go`, a 62KB file, and took
+60,313 bytes between them, not 8 × 62,932. Any estimate built on "each agent reads the whole file"
+is wrong by roughly 8x.
 
-(Weighted as `input + 5 × output`, since output costs 5× input.)
+**Against that real behaviour, sharing a derivation loses.** For the same file: the lead reads it
+whole to derive (62,932 B), seven followers take a ~2,000 B derivation → 76,624 B, against the
+60,313 B the agents actually spent. **27% worse.**
 
-So when dispatching parallel agents over shared material: have **one** agent read and derive,
-`cache_set` the derivation, and give the rest the entry to start from. They read source only where
-they need exact detail — which is why a derivation should carry line numbers and file paths rather
-than trying to replace the code. Followers should use `cache_query`, since they will not phrase
-the question the way the lead did.
+The reason is worth internalising: **grep is already a cheap, precise pointer.** An agent that can
+grep does not need a cached map to find where something lives — it needs about 900 tokens to locate
+and read the relevant slice. A cached orientation competes with grep on grep's own ground and
+loses, because it costs ~850 tokens to load and still leaves the read to do.
 
-Contexts in a dispatch are alive at the same time, and a write from one is immediately visible to
-the others; `src/niche.test.ts` pins that, and separate parallel processes were verified to write
-a shared cache without loss or contention.
+Measured directly on that comparison: agents given no cache spent **903 and 947 tokens** on tool
+results; agents that consulted a cached orientation first spent **1,911 and 1,937** — twice as
+much, for the same answer.
 
-**What the derivation saves depends on the question, not the agent.** The table above assumes
-followers can work from the derivation. Measured against that assumption: two agents dispatched
-with the `codebase-orienter` definition both consulted the cache unprompted — where two
-general-purpose agents given the identical prompt did not — and then *both read the source anyway*,
-because the question asked for exact ordering and line numbers, which a derivation does not carry.
-For that task the cache was overhead: ~7,029 tokens against ~6,179 for reading alone, about 14%
-worse.
+So do not dispatch a shared orientation expecting it to replace reading. What survives is narrower
+and more specific:
 
-So dispatch on the shape of the question:
-
-- **Orientation-shaped** — "which module handles X", "where does responsibility for Y live", "what
-  is *not* in this repo" — a derivation answers outright. One agent asked the same question this
-  way answered from an 850-token entry instead of a 6,179-token file, ~86% cheaper.
-- **Precision-shaped** — exact ordering, line numbers, the body of a function, anything about to
-  be edited — expect the follower to read source regardless. The derivation still earns its place
-  by pointing at the right file, but budget for the read rather than against it.
-
-Treat a derivation as a map, not a replacement. The savings in the table land when followers ask
-for directions; they do not land when followers need the territory.
-
-**Put the protocol in the dispatch prompt — do not assume a subagent will find the cache.**
-Measured on four dispatched agents asked one question a cached derivation fully answered: of the
-two told nothing, **neither** consulted the cache; both went straight to grep and read. Of the two
-told to check it first, both did, and one answered without opening a file at all. A cold context
-does not know the cache exists, so whoever dispatches has to say so. One line is enough:
-
-> An earlier agent cached an orientation for this codebase in the `nowhereman` MCP server. Check
-> it with `cache_query` before reading any file.
-
-Two practical notes from that run. `nowhereman`'s tools may be **deferred** in a subagent's
-context — both compliant agents had to call `ToolSearch` before they could reach `cache_query`, so
-say which tool you mean. And expect a follower to re-read source anyway when it needs precision:
-the agent that answered from the derivation alone gave the right answer without line numbers,
-while the one that also read the file gave line numbers. That is the trade a derivation makes, not
-a failure of it.
-
-For repeated dispatches, `.claude/agents/codebase-orienter.md` carries this protocol as an agent
-definition, so it arrives with the cold context instead of depending on the dispatcher remembering.
+- **Cache what grep cannot reconstruct.** A conclusion, a judgement, the reason something is the
+  way it is, a cross-file synthesis no single search reveals, the fact that something is *absent*.
+  Locations are not worth caching; grep finds them for less than the cache costs to consult.
+- **The bigger the reasoning-to-text ratio, the better it pays.** An entry that took a long chain
+  of reasoning to produce and is short to state is the ideal case. An entry that merely restates
+  where code lives is the worst.
 
 ### Keeping a derivation honest about its sources
 

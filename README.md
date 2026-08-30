@@ -30,21 +30,25 @@ the content still has to enter the context. So caching file reads saves nothing 
 and if the agent re-emits the file to store it, you have paid output-rate tokens for zero benefit.
 A cache only pays when a hit stands in for *regenerating* something.
 
-Two cases where it does pay, both measured:
+Where it pays, and where measurement said it does not:
 
-- **Re-orientation across sessions.** An agent reads a codebase to understand it; the session
+- **Pays: re-orientation across sessions.** An agent reads a codebase to understand it; the session
   ends; a later session needs that understanding again. On `express/lib` — six files, 62KB —
   re-reading the source costs 15,504 tokens against 549 to serve the cached orientation, about
-  **28× fewer**, repaid on the first reuse.
-- **Fan-out across parallel agents.** In a real dispatch of 30 subagents over one repository, 60%
-  of all file reads were of a file another subagent had already read — roughly 243,000 redundant
-  tokens. Having one agent read and derive, then sharing that derivation, came out **79% cheaper**
-  across eight agents even when each still read one function for exact detail.
+  **28× fewer**. That holds when the later session genuinely needs broad understanding. If it only
+  needs one specific answer, it will grep and read a slice for ~900 tokens, and the cache is not
+  competitive.
+- **Does not pay: replacing reads in a parallel dispatch.** Thirty subagents in one code-review
+  dispatch pulled ~374,000 tokens of content a sibling had already read — but 127 of their 166
+  reads used `offset`/`limit`, so they were already taking slices rather than whole files.
+  Substituting a shared derivation for those slices measured **27% worse** than what they actually
+  did. Grep is already a cheap, precise pointer; a cached map competes with it on its own ground
+  and loses.
 
-  That figure holds for orientation-shaped questions. Measured on a question that instead demanded
-  exact line numbers, followers consulted the derivation *and* read the source anyway, making the
-  dispatch about 14% more expensive than reading alone. A derivation is a map, not a replacement:
-  it pays when followers need directions, not when they need the territory.
+The rule both cases point at: **cache what grep cannot reconstruct.** A conclusion, a judgement,
+the reason something is the way it is, a cross-file synthesis no single search reveals, the fact
+that something is *absent*. Never a location — grep finds those for less than the cache costs to
+consult — and never a file.
 
 So a derivation should carry file paths and line numbers rather than trying to replace the code,
 and consumers should reach for `cache_query` rather than `cache_get` — a later session, or a
