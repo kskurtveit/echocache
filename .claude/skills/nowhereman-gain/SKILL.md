@@ -10,7 +10,12 @@ Call the `cache_stats` tool and present the result as a short report:
 - **Entries / edges** — how much the cache has accumulated (`entries`, `edges`).
 - **Stored bytes** — `bytesStored`, the total size of retained responses. Note this is the size
   *on disk*: with at-rest encryption enabled it runs roughly a third above the plaintext size.
-- **Hit rate** — `hits / (hits + misses)`, as a percentage.
+- **Hit rate** — `hits / (hits + misses)`, as a percentage. This covers the **exact-match** path
+  only (`cache_get`).
+- **Semantic recall** — `queryHits` / `queryMisses`, how often `cache_query` found something.
+  Report this alongside the hit rate rather than folding it in: for derivations recalled by
+  meaning — the case this cache is for — `cache_query` is the primary path, and a cache can show
+  a poor exact-match hit rate while working exactly as intended.
 - **Tokens served** — `tokensServed`, the running total handed back across every `cache_get` hit
   (from each entry's response length at ~4 chars/token).
 - **Evictions** — `evictions`, entries dropped to stay under the configured ceilings. A large

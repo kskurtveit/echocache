@@ -60,10 +60,10 @@ separately for tests. Types: `NodeRow`, `CacheEntry`, `RelatedEntry`, `QueryMatc
 |---|---|
 | `get(model, prompt, params?)` | Exact-match lookup; counts hits/misses and `tokens_served` |
 | `set(opts)` | Insert or replace, link into the graph, enforce limits; returns `{ id, linkedTo, evicted }` |
-| `query(text, opts?)` | Semantic search; floor defaults to `DEFAULT_QUERY_FLOOR` (0.3) |
+| `query(text, opts?)` | Semantic search; floor defaults to `DEFAULT_QUERY_FLOOR` (0.3). Records access on every match — a recall is a use, and an entry reachable only by meaning would otherwise look untouched to LRU |
 | `related(id, opts?)` | BFS over edges, optionally filtered to one relation |
 | `invalidate(id, opts?)` | Delete, optionally cascading through `derived-from` dependents |
-| `stats()` | Counts, hit rate, `tokensServed`, evictions, bytes, top entries |
+| `stats()` | Counts, exact-match hit rate, `queryHits`/`queryMisses`, `tokensServed`, evictions, bytes, top entries |
 | `enforceLimits()` | Drop expired entries, then LRU down to the entry and byte ceilings |
 
 Private: `migrateEmbeddings` (re-embeds on `EMBEDDING_VERSION` change), `addToDocFreq` /

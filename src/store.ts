@@ -476,11 +476,24 @@ export class CacheStore {
             .slice(0, topK);
 
         const nodeQuery = this.db.prepare<[string], NodeRow>('SELECT * FROM nodes WHERE id = ?');
+        const touch = this.db.prepare(
+            'UPDATE nodes SET hit_count = hit_count + 1, last_accessed_at = ? WHERE id = ?'
+        );
         const matches: QueryMatch[] = [];
+        let served = 0;
         for (const { id, sim } of scored) {
             const row = nodeQuery.get(id);
-            if (row) matches.push({ ...this.toEntry(row, now), similarity: sim });
+            if (!row) continue;
+            matches.push({ ...this.toEntry(row, now), similarity: sim });
+            // A recall is a use. Without recording it, an entry reachable only by meaning looks
+            // untouched to enforceLimits() and is evicted first — precisely the entries this
+            // cache exists to keep.
+            touch.run(now, id);
+            served += row.estimated_tokens;
         }
+
+        bump(this.db, matches.length > 0 ? 'query_hits' : 'query_misses');
+        if (served > 0) bump(this.db, 'tokens_served', served);
         return matches;
     }
 
@@ -551,6 +564,8 @@ export class CacheStore {
         misses: number;
         sets: number;
         hitRate: number;
+        queryHits: number;
+        queryMisses: number;
         tokensServed: number;
         evictions: number;
         bytesStored: number;
@@ -565,6 +580,8 @@ export class CacheStore {
         const misses = getStat(this.db, 'misses');
         const sets = getStat(this.db, 'sets');
         const evictions = getStat(this.db, 'evictions');
+        const queryHits = getStat(this.db, 'query_hits');
+        const queryMisses = getStat(this.db, 'query_misses');
         const tokensServed = getStat(this.db, 'tokens_served');
         const topEntries = this.db
             .prepare<[], { id: string; model: string; prompt: string; hit_count: number }>(
@@ -579,6 +596,8 @@ export class CacheStore {
             misses,
             sets,
             hitRate: hits + misses === 0 ? 0 : hits / (hits + misses),
+            queryHits,
+            queryMisses,
             tokensServed,
             evictions,
             bytesStored,

@@ -365,6 +365,38 @@ describe('stats', () => {
         assert.equal(store.stats().tokensServed, 100, '400 chars ≈ 100 tokens');
     });
 
+    test('counts semantic recalls, not only exact-key hits', () => {
+        const store = newStore();
+        store.set({ model: 'm', prompt: 'connection pooling for postgres', response: 'x'.repeat(400) });
+
+        store.query('postgres pooling');
+        assert.equal(store.stats().queryHits, 1, 'a recall that returned an entry must be counted');
+        assert.equal(store.stats().tokensServed, 100, 'a recall serves tokens like any other hit');
+
+        store.query('entirely unrelated parliamentary procedure');
+        assert.equal(store.stats().queryMisses, 1, 'a recall that found nothing must be counted');
+    });
+
+    test('a semantic recall marks the entry as used, so LRU stops treating it as untouched', () => {
+        const store = newStore();
+        const entry = store.set({ model: 'm', prompt: 'connection pooling for postgres', response: 'pool notes' });
+        const before = db
+            .prepare<[string], { t: number }>('SELECT last_accessed_at AS t FROM nodes WHERE id = ?')
+            .get(entry.id)!.t;
+
+        // Date.now() has millisecond resolution, so force a distinct tick rather than let the
+        // assertion depend on how fast the machine is.
+        const until = Date.now() + 2;
+        while (Date.now() < until) { /* spin */ }
+
+        assert.equal(store.query('postgres pooling').length, 1);
+
+        const after = db
+            .prepare<[string], { t: number }>('SELECT last_accessed_at AS t FROM nodes WHERE id = ?')
+            .get(entry.id)!.t;
+        assert.ok(after > before, `recall did not record access (${before} -> ${after}); LRU will evict it as stale`);
+    });
+
     test('counts what was served, not what an entry might have cost to produce', () => {
         const store = newStore();
         store.set({ model: 'm', prompt: 'p', response: 'x'.repeat(400) });
