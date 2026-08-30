@@ -41,6 +41,11 @@ Two cases where it does pay, both measured:
   tokens. Having one agent read and derive, then sharing that derivation, came out **79% cheaper**
   across eight agents even when each still read one function for exact detail.
 
+  That figure holds for orientation-shaped questions. Measured on a question that instead demanded
+  exact line numbers, followers consulted the derivation *and* read the source anyway, making the
+  dispatch about 14% more expensive than reading alone. A derivation is a map, not a replacement:
+  it pays when followers need directions, not when they need the territory.
+
 So a derivation should carry file paths and line numbers rather than trying to replace the code,
 and consumers should reach for `cache_query` rather than `cache_get` — a later session, or a
 sibling agent, will not phrase the question the way the writer did.

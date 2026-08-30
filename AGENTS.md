@@ -121,6 +121,26 @@ Contexts in a dispatch are alive at the same time, and a write from one is immed
 the others; `src/niche.test.ts` pins that, and separate parallel processes were verified to write
 a shared cache without loss or contention.
 
+**What the derivation saves depends on the question, not the agent.** The table above assumes
+followers can work from the derivation. Measured against that assumption: two agents dispatched
+with the `codebase-orienter` definition both consulted the cache unprompted — where two
+general-purpose agents given the identical prompt did not — and then *both read the source anyway*,
+because the question asked for exact ordering and line numbers, which a derivation does not carry.
+For that task the cache was overhead: ~7,029 tokens against ~6,179 for reading alone, about 14%
+worse.
+
+So dispatch on the shape of the question:
+
+- **Orientation-shaped** — "which module handles X", "where does responsibility for Y live", "what
+  is *not* in this repo" — a derivation answers outright. One agent asked the same question this
+  way answered from an 850-token entry instead of a 6,179-token file, ~86% cheaper.
+- **Precision-shaped** — exact ordering, line numbers, the body of a function, anything about to
+  be edited — expect the follower to read source regardless. The derivation still earns its place
+  by pointing at the right file, but budget for the read rather than against it.
+
+Treat a derivation as a map, not a replacement. The savings in the table land when followers ask
+for directions; they do not land when followers need the territory.
+
 **Put the protocol in the dispatch prompt — do not assume a subagent will find the cache.**
 Measured on four dispatched agents asked one question a cached derivation fully answered: of the
 two told nothing, **neither** consulted the cache; both went straight to grep and read. Of the two
