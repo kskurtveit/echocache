@@ -121,6 +121,25 @@ Contexts in a dispatch are alive at the same time, and a write from one is immed
 the others; `src/niche.test.ts` pins that, and separate parallel processes were verified to write
 a shared cache without loss or contention.
 
+**Put the protocol in the dispatch prompt — do not assume a subagent will find the cache.**
+Measured on four dispatched agents asked one question a cached derivation fully answered: of the
+two told nothing, **neither** consulted the cache; both went straight to grep and read. Of the two
+told to check it first, both did, and one answered without opening a file at all. A cold context
+does not know the cache exists, so whoever dispatches has to say so. One line is enough:
+
+> An earlier agent cached an orientation for this codebase in the `nowhereman` MCP server. Check
+> it with `cache_query` before reading any file.
+
+Two practical notes from that run. `nowhereman`'s tools may be **deferred** in a subagent's
+context — both compliant agents had to call `ToolSearch` before they could reach `cache_query`, so
+say which tool you mean. And expect a follower to re-read source anyway when it needs precision:
+the agent that answered from the derivation alone gave the right answer without line numbers,
+while the one that also read the file gave line numbers. That is the trade a derivation makes, not
+a failure of it.
+
+For repeated dispatches, `.claude/agents/codebase-orienter.md` carries this protocol as an agent
+definition, so it arrives with the cold context instead of depending on the dispatcher remembering.
+
 ### Keeping a derivation honest about its sources
 
 A derivation goes wrong when its source changes underneath it, and a TTL cannot detect that. Record
