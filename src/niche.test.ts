@@ -105,6 +105,56 @@ describe('a derivation outliving the session that produced it', () => {
     });
 });
 
+describe('the case grep cannot answer: cached research and judgment calls', () => {
+    /**
+     * Live-validated 2026-08-30: a real BM25-vs-SPLADE web search, synthesized into a design
+     * judgment for this project, cached, then recalled by different wording. `cache_query`
+     * ranked it first (0.69) ahead of a module-reference entry that shares surface vocabulary
+     * ("sparse", "vectors") but is about something else entirely (0.54) — that false-positive
+     * risk is real and worth guarding against structurally, not just noting.
+     *
+     * Real production cost for one such conclusion, pulled from this project's own session
+     * history rather than estimated: 22 tool calls, 37,119 output tokens + 84 input, to reach a
+     * 255-token synthesized answer. Weighted at output = 5x input (Opus 5 / Sonnet 5 pricing),
+     * reproducing it costs ~185,679; serving it back costs ~255. Because that gap is so large,
+     * a single reuse justifies the write (~1,275 to re-emit) by a ~145x margin — unlike a cached
+     * file read, which loses at every hit rate regardless of size.
+     */
+    const CODE_DESCRIPTION = `
+        Vectors are sparse: parallel arrays of buckets and values, ascending by bucket. A query is
+        scattered into a dense lookup once per search so scoring each candidate stays proportional
+        to its own term count rather than the whole hash space. Weights come from a document
+        frequency table rebuilt from the corpus, never baked into the stored vector.
+    `;
+    const RESEARCH_CONCLUSION = `
+        Stick with BM25-style lexical scoring; a learned sparse retrieval model is not a clear
+        enough win to justify the dependency. Published benchmarks show BM25 beating dense
+        retrieval on precise-terminology text, and a learned sparse model beating BM25 by only
+        0.002 to 0.105 nDCG@10 with no systematic winner across corpus types, while requiring a
+        trained checkpoint and sparsity regularization this project has no infrastructure for.
+        Revisit only if a future need requires cross-lingual or synonym-level matching.
+    `;
+
+    test('a cached research judgment outranks an unrelated entry that shares surface vocabulary', () => {
+        const dbPath = join(dir, 'cache.db');
+        session(dbPath, store => {
+            store.set({ model: 'orient', prompt: 'vector storage format', response: CODE_DESCRIPTION });
+            store.set({
+                model: 'research',
+                prompt: 'is BM25 competitive with a learned sparse retrieval model for this corpus',
+                response: RESEARCH_CONCLUSION
+            });
+        });
+
+        const matches = session(dbPath, store =>
+            store.query('should we swap the retrieval scoring for a trained model instead')
+        );
+
+        assert.ok(matches.length > 0, 'expected the research conclusion to be recalled');
+        assert.equal(matches[0]!.model, 'research', 'a surface-vocabulary collision outranked the real answer');
+    });
+});
+
 describe('fan-out: many cold contexts sharing one derivation', () => {
     /**
      * The measured case. Eight subagents dispatched over one repository each read

@@ -62,11 +62,44 @@ at output rates. Reading it back on a hit costs the same tokens as any other too
 - **In between**: web fetches and doc lookups. Cheap enough to redo that the raw page rarely earns
   its write — but a distilled answer drawn from several of them usually does.
 
-### The case this cache exists for
+### The case with real numbers behind it: research and judgment calls
 
-Re-orientation across sessions. You read a codebase to understand it, the session ends, and a
-later session needs that understanding again. Caching the *files* saves nothing. Caching what you
-*concluded* replaces the whole re-read.
+The clearest validated case, and the one `src/server.ts`'s tool descriptions described from the
+start — "cached LLM response... before issuing an expensive prompt to a model." A multi-step web
+search that ends in a synthesized recommendation, an expensive computed judgment, an analysis
+requiring several tool calls to reach. **Not** locating code — grep already does that for less
+than this cache costs to consult; see the fan-out section below for what that mistake costs.
+
+Measured from this project's own session history, not estimated: a real 22-tool-call research
+chain (board throughput specs, drive benchmarks) that ended in a 255-token engineering
+recommendation cost **37,119 output tokens** to produce, by the actual usage numbers in the
+transcript. Weighted at output = 5x input, that is ~185,679 weighted tokens to reproduce against
+~255 to serve the cached answer back — a **728x** gap. Because the gap is this large, a single
+reuse justifies the write (~1,275 weighted tokens to re-emit the conclusion) by roughly 145x. This
+is the opposite of caching a file read, which loses at every hit rate regardless of size: here, one
+hit anywhere in the future already pays for itself many times over.
+
+Live-validated the same day on a different kind of content: a real web search on BM25 versus
+learned sparse retrieval, synthesized into a design decision for `embed.ts`, cached, then recalled
+by different wording (`cache_query` ranked it 0.69). The cache also surfaced a real precision risk
+worth naming — an unrelated code-description entry sharing surface vocabulary ("sparse", "vector")
+scored 0.54, close enough to be a plausible false positive in a sparser corpus. `niche.test.ts`
+pins the correct ranking for this case.
+
+**What this niche has not shown**: that it actually recurs. Mining this project's own history for
+cross-session re-derivation of research or judgment calls found none — the same absence found for
+codebase orientation. The economics above are real; whether anyone asks the same expensive question
+twice is unproven and, in this one corpus, has not yet happened. Cache the conclusion anyway when
+you reach one: the payoff on the first hit is large enough that low frequency is not disqualifying,
+the way it was for file reads.
+
+### A second, narrower case: re-orientation across sessions
+
+You read a codebase to understand it, the session ends, and a later session needs that
+understanding again. Caching the *files* saves nothing. Caching what you *concluded* can replace
+the whole re-read — but only when the later session needs broad understanding rather than one
+answer; a session that just needs one thing will grep for it more cheaply than the cache costs to
+consult, the same lesson as the fan-out section below.
 
 Measured on `express/lib` — six files, 62KB:
 

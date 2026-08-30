@@ -32,7 +32,14 @@ A cache only pays when a hit stands in for *regenerating* something.
 
 Where it pays, and where measurement said it does not:
 
-- **Pays: re-orientation across sessions.** An agent reads a codebase to understand it; the session
+- **Pays best: an expensive research or judgment call.** A real 22-tool-call research chain in
+  this project's own history cost 37,119 output tokens to reach a 255-token conclusion — a 728x
+  gap against serving that conclusion back, weighted for output pricing. A single reuse pays for
+  the write ~145x over. Live-validated the same way with a fresh web-search-derived design
+  decision, correctly recalled by different wording and correctly outranking an unrelated entry
+  sharing surface vocabulary. Not proven to recur yet in this project's own history — but the
+  payoff on one hit is large enough that low frequency isn't disqualifying, unlike a file read.
+- **Pays conditionally: re-orientation across sessions.** An agent reads a codebase to understand it; the session
   ends; a later session needs that understanding again. On `express/lib` — six files, 62KB —
   re-reading the source costs 15,504 tokens against 549 to serve the cached orientation, about
   **28× fewer**. That holds when the later session genuinely needs broad understanding. If it only
@@ -45,14 +52,15 @@ Where it pays, and where measurement said it does not:
   did. Grep is already a cheap, precise pointer; a cached map competes with it on its own ground
   and loses.
 
-The rule both cases point at: **cache what grep cannot reconstruct.** A conclusion, a judgement,
-the reason something is the way it is, a cross-file synthesis no single search reveals, the fact
-that something is *absent*. Never a location — grep finds those for less than the cache costs to
-consult — and never a file.
+The rule all three point at: **cache what grep cannot reconstruct.** A conclusion, a judgement,
+the reason something is the way it is, a cross-file synthesis no single search reveals, a
+research finding, the fact that something is *absent*. Never a location — grep finds those for
+less than the cache costs to consult — and never a file.
 
-So a derivation should carry file paths and line numbers rather than trying to replace the code,
-and consumers should reach for `cache_query` rather than `cache_get` — a later session, or a
-sibling agent, will not phrase the question the way the writer did.
+When a cached entry does carry file paths or line numbers, that is to point a reader at exact
+detail, not to replace reading it. And reach for `cache_query` rather than `cache_get` when
+looking for a match: a later session, or another agent, will not phrase the question the way the
+writer did.
 
 What this is not: a way to avoid reading files, a source of truth, or a substitute for
 [prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching) *within* one
