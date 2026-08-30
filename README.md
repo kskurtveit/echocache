@@ -1,10 +1,9 @@
 # nowhereman
 
 An MCP server for a **cached LLM response** — the way an HTTP cache caches an expensive server
-response, not the way a browser caches a static asset. `cache_get` checks `(model, prompt,
-params)` against a cache key before you pay to regenerate the answer yourself; for the agent who
-doesn't know where it's going to, but doesn't need to redo the last mile of work to get there.
-("He's a real nowhere man... doesn't have a point of view" — but he does have a cache.)
+response, not the way a browser caches a static asset. For the agent who doesn't know where it's
+going to, but doesn't need to redo the last mile of work to get there. ("He's a real nowhere
+man... doesn't have a point of view" — but he does have a cache.)
 
 Two lookup paths, inspired by two different kinds of caching:
 
@@ -24,13 +23,12 @@ follow.
 
 ## What it's for — and what it isn't
 
-Cache what an agent **concluded**, never what it **read**.
-
-This is the whole design, and it is worth stating plainly because the intuitive use is the wrong
-one. Serving a cached file read costs the reader exactly the tokens that reading the file cost —
-the content still has to enter the context. So caching file reads saves nothing at any hit rate,
-and if the agent re-emits the file to store it, you have paid output-rate tokens for zero benefit.
-A cache only pays when a hit stands in for *regenerating* something.
+Cache what an agent **concluded**, never what it **read**. This is the whole design, and it is
+worth stating plainly because the intuitive use is the wrong one: serving a cached file read costs
+the reader exactly the tokens that reading the file cost, since the content still has to enter the
+context. So caching file reads saves nothing at any hit rate, and if the agent re-emits the file to
+store it, that's output-rate tokens paid for zero benefit. A cache only pays when a hit stands in
+for *regenerating* something.
 
 Where it pays, and where measurement said it does not:
 
@@ -41,18 +39,18 @@ Where it pays, and where measurement said it does not:
   decision, correctly recalled by different wording and correctly outranking an unrelated entry
   sharing surface vocabulary. Not proven to recur yet in this project's own history — but the
   payoff on one hit is large enough that low frequency isn't disqualifying, unlike a file read.
-- **Pays conditionally: re-orientation across sessions.** An agent reads a codebase to understand it; the session
-  ends; a later session needs that understanding again. On `express/lib` — six files, 62KB —
-  re-reading the source costs 15,504 tokens against 549 to serve the cached orientation, about
-  **28× fewer**. That holds when the later session genuinely needs broad understanding. If it only
-  needs one specific answer, it will grep and read a slice for ~900 tokens, and the cache is not
-  competitive.
+- **Pays conditionally: re-orientation across sessions.** An agent reads a codebase to understand
+  it, the session ends, and a later session needs that understanding again. On `express/lib` — six
+  files, 62KB — re-reading the source costs 15,504 tokens against 549 to serve the cached
+  orientation, about **28× fewer**. That holds when the later session genuinely needs broad
+  understanding; if it only needs one specific answer, it will grep and read a slice for ~900
+  tokens, and the cache isn't competitive.
 - **Does not pay: replacing reads in a parallel dispatch.** Thirty subagents in one code-review
   dispatch pulled ~374,000 tokens of content a sibling had already read — but 127 of their 166
   reads used `offset`/`limit`, so they were already taking slices rather than whole files.
   Substituting a shared derivation for those slices measured **27% worse** than what they actually
-  did. Grep is already a cheap, precise pointer; a cached map competes with it on its own ground
-  and loses.
+  did: grep is already a cheap, precise pointer, and a cached map competes with it on its own
+  ground and loses.
 
 The rule all three point at: **cache what grep cannot reconstruct.** A conclusion, a judgement,
 the reason something is the way it is, a cross-file synthesis no single search reveals, a
@@ -75,6 +73,8 @@ the context that produced them.
 npm install
 npm start
 ```
+
+Then register it with an MCP host — for Claude Code:
 
 ```sh
 claude mcp add nowhereman -- npx tsx /path/to/nowhereman/src/index.ts
