@@ -18,13 +18,73 @@ nowhereman is a Model Context Protocol server exposing a cache with two lookup p
 
 - `src/embed.ts` — local text embedding (sparse feature hashing) + IDF-weighted scoring, no external deps or network.
 - `src/config.ts` — env-var configuration with validation; `loadConfig()` throws on bad input.
-- `src/db.ts` — SQLite schema (`nodes`, `edges`, `stats`, `doc_freq`) via better-sqlite3.
+- `src/crypto.ts` — optional AES-256-GCM at-rest encryption and the keyed cache-key digest.
+- `src/db.ts` — SQLite schema (`nodes`, `edges`, `stats`, `meta`, `doc_freq`) via better-sqlite3.
 - `src/store.ts` — cache/graph logic: key hashing, freshness computation, similarity linking, BFS traversal, eviction.
 - `src/server.ts` — MCP tool registration (`@modelcontextprotocol/server`), wires tools to `CacheStore`.
 - `src/index.ts` — stdio entrypoint.
 - `src/*.test.ts` — `node:test` suites, run via `tsx --test`. `retrieval.test.ts` pins search
   quality at the shipped defaults and `niche.test.ts` pins the cross-session recall the product
   exists for; see Testing below.
+
+## Module reference
+
+### `embed.ts` — embedding and scoring
+
+Vectors are **sparse**: `{ buckets: Int32Array, values: Float32Array }`, ascending by bucket.
+Values are damped term frequency (`1 + log tf`), signed, and deliberately unnormalized — IDF is
+applied at scoring time so stored vectors never go stale as the corpus grows.
+
+| Export | Purpose |
+|---|---|
+| `embed(text): Embedding` | Tokenize (splitting camelCase) and feature-hash into a sparse vector |
+| `idfWeights(stats: CorpusStats): Float32Array` | Dense IDF lookup over the hash space, built once per operation |
+| `documentSimilarity(a, b, weights): number` | Symmetric score for auto-linking; both sides full entries |
+| `prepareQuery(query, weights): PreparedQuery` | Scatter a query to dense + precompute its norm, once per search |
+| `queryScore(query, doc, weights): number` | Asymmetric short-query-to-long-entry score, 0–1 |
+| `toBuffer` / `fromBuffer` | Wire format: one Int32 bucket + one Float32 value per occupied bucket |
+| `HASH_SPACE` | 16384 |
+
+Types: `Embedding`, `CorpusStats` (`{ docCount, docFreq: Map<bucket, count> }`, supplied by
+`CacheStore.corpusStats()` from the `doc_freq` table), `PreparedQuery`.
+Internal: `fnv1a`, `tokenize`, `idf`, `weightedNorm`, `toDense`.
+Tuning constants, all calibrated in `retrieval.test.ts`: `HASH_SPACE` 16384, `BREADTH_PENALTY`
+0.25, `MIN_EFFECTIVE_CORPUS` 20.
+
+### `store.ts` — cache and graph logic
+
+`CacheStore` is the whole surface; `computeKeyHash(model, prompt, params, cipher?)` is exported
+separately for tests. Types: `NodeRow`, `CacheEntry`, `RelatedEntry`, `QueryMatch`.
+
+| Method | Purpose |
+|---|---|
+| `get(model, prompt, params?)` | Exact-match lookup; counts hits/misses and `tokens_served` |
+| `set(opts)` | Insert or replace, link into the graph, enforce limits; returns `{ id, linkedTo, evicted }` |
+| `query(text, opts?)` | Semantic search; floor defaults to `DEFAULT_QUERY_FLOOR` (0.3) |
+| `related(id, opts?)` | BFS over edges, optionally filtered to one relation |
+| `invalidate(id, opts?)` | Delete, optionally cascading through `derived-from` dependents |
+| `stats()` | Counts, hit rate, `tokensServed`, evictions, bytes, top entries |
+| `enforceLimits()` | Drop expired entries, then LRU down to the entry and byte ceilings |
+
+Private: `migrateEmbeddings` (re-embeds on `EMBEDDING_VERSION` change), `addToDocFreq` /
+`removeFromDocFreq` / `corpusStats` (document-frequency bookkeeping),
+`assertKeyMatchesDatabase`, `seal` / `open` (encryption), `toEntry`, `deleteNode`.
+
+### `crypto.ts` — `Cipher`
+
+`Cipher.fromHex(hex)` (64 hex chars, rejects anything shorter rather than stretching it) and
+`Cipher.generateKeyHex()`. Instance: `encrypt`, `decrypt`, `digest` (keyed cache-key HMAC),
+`makeVerifier` / `matchesVerifier` (constant-time key/database match check).
+
+### `db.ts`, `config.ts`, `server.ts`, `index.ts`
+
+`openDb(path)` creates the schema and locks permissions to the owner; `getMeta` / `setMeta` /
+`bump` / `getStat` are the small helpers over `meta` and `stats`.
+`loadConfig()` reads and validates every env var, throwing on bad input; `DEFAULT_CONFIG` is the
+same values as literals for tests.
+`createServer(db, config?)` registers the six tools, each wrapped in `guard()` so a failure
+surfaces as an `isError` result rather than a silent miss.
+`main()` in `index.ts` wires config → db → server on stdio, failing loudly at startup.
 
 ## Running
 
@@ -86,6 +146,17 @@ the real score before adjusting a threshold — and never "fix" a retrieval test
 lower `minSimilarity` than a real caller gets. That is precisely how the original defaults came
 to be unusable while 89 tests passed: the auto-link test compared near-duplicates with identical
 responses, and the query test overrode the floor to 0.3 when the shipped default was 0.5.
+
+**The registered server is a running process, not the working tree.** After changing `src/`, an
+already-registered `nowhereman` keeps serving the old code until the host restarts it — the tell is
+`cache_stats` still reporting a field you renamed, or `cache_query` behaving the way it did before
+your fix. Verified the confusing way: a dogfooding query returned `[]` against a stale server while
+the same query scored 0.69 against the same database with the current code. Restart the host (or
+`claude mcp remove nowhereman && claude mcp add ...`) before trusting a live result.
+
+Renaming a `stats` key also resets that counter, since the old row is still stored under the old
+key. `tokens_saved` -> `tokens_served` cost the historical total; that was a deliberate trade for an
+honest name.
 
 ## Registering with a host
 
