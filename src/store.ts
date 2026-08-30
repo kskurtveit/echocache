@@ -302,48 +302,44 @@ export class CacheStore {
         const params = opts.params ?? {};
         const keyHash = computeKeyHash(opts.model, opts.prompt, params, this.cipher);
         const now = Date.now();
-        const id = randomUUID();
+        const candidateId = randomUUID();
         const embedding = embed(`${opts.prompt}\n${opts.response}`);
         const estTokens = estimateTokens(opts.response);
 
-        const existing = this.db
-            .prepare<[string], EmbeddingRow>('SELECT id, embedding FROM nodes WHERE key_hash = ?')
+        // Retiring the old row's document-frequency contribution has to happen before the write
+        // below, but reading it here rather than inside that statement leaves a narrow window: a
+        // concurrent writer landing between this SELECT and the write could see its own
+        // contribution retired instead of this one's. That residual imprecision is accepted —
+        // corpusStats() is already a best-effort snapshot, never a fully serialized count — in
+        // exchange for closing the much worse gap below.
+        const existingEmbedding = this.db
+            .prepare<[string], EmbeddingRow>('SELECT embedding FROM nodes WHERE key_hash = ?')
             .get(keyHash);
-        if (existing) {
-            // The replacement occupies different buckets; retire the old row's contribution
-            // before adding the new one, or document frequencies drift permanently high.
-            this.removeFromDocFreq(fromBuffer(existing.embedding));
-            this.db
-                .prepare(
-                    `UPDATE nodes SET response = ?, params_json = ?, tags_json = ?, embedding = ?,
-                     created_at = ?, last_accessed_at = ?, ttl_seconds = ?, stale_while_revalidate_s = ?,
-                     estimated_tokens = ? WHERE id = ?`
-                )
-                .run(
-                    this.seal(opts.response),
-                    JSON.stringify(params),
-                    JSON.stringify(opts.tags ?? []),
-                    toBuffer(embedding),
-                    now,
-                    now,
-                    opts.ttlSeconds === undefined ? this.config.defaultTtlSeconds : opts.ttlSeconds,
-                    opts.staleWhileRevalidateSeconds ?? 0,
-                    estTokens,
-                    existing.id
-                );
-            this.addToDocFreq(embedding);
-            bump(this.db, 'sets');
-            return { id: existing.id, linkedTo: 0, evicted: this.enforceLimits() };
-        }
+        if (existingEmbedding) this.removeFromDocFreq(fromBuffer(existingEmbedding.embedding));
 
-        this.db
-            .prepare(
+        // A separate SELECT-then-INSERT would leave a real gap for two processes to both see "no
+        // existing row" and both try to create one — the cache is shared across every project
+        // that registers this server, so that is a real scenario, not a hypothetical. One atomic
+        // upsert closes it at the engine level: whichever write loses the race updates the
+        // winner's row instead of hitting the key_hash UNIQUE constraint. RETURNING id reveals
+        // which happened — it comes back as candidateId only when this write was the one that
+        // actually inserted.
+        const written = this.db
+            .prepare<unknown[], { id: string }>(
                 `INSERT INTO nodes (id, key_hash, model, prompt, response, params_json, tags_json, embedding,
                  created_at, last_accessed_at, hit_count, ttl_seconds, stale_while_revalidate_s, estimated_tokens)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                 ON CONFLICT(key_hash) DO UPDATE SET
+                     response = excluded.response, params_json = excluded.params_json,
+                     tags_json = excluded.tags_json, embedding = excluded.embedding,
+                     created_at = excluded.created_at, last_accessed_at = excluded.last_accessed_at,
+                     ttl_seconds = excluded.ttl_seconds,
+                     stale_while_revalidate_s = excluded.stale_while_revalidate_s,
+                     estimated_tokens = excluded.estimated_tokens
+                 RETURNING id`
             )
-            .run(
-                id,
+            .get(
+                candidateId,
                 keyHash,
                 opts.model,
                 this.seal(opts.prompt),
@@ -356,32 +352,37 @@ export class CacheStore {
                 opts.ttlSeconds === undefined ? this.config.defaultTtlSeconds : opts.ttlSeconds,
                 opts.staleWhileRevalidateSeconds ?? 0,
                 estTokens
-            );
+            )!;
+        const id = written.id;
+        const wasInsert = id === candidateId;
         this.addToDocFreq(embedding);
         bump(this.db, 'sets');
 
         let linkedTo = 0;
-        const weights = idfWeights(this.corpusStats());
-        const threshold = opts.similarityThreshold ?? this.config.similarityThreshold;
-        // Comparing against every existing node would make each write O(n) and the whole cache
-        // O(n^2) to fill. Capping the candidate pool bounds write cost as the cache grows, at the
-        // cost of not linking against nodes older than the cap — acceptable for a local dev cache.
-        // Only id+embedding are selected: pulling `response` here would load the whole cache body
-        // into memory on every write.
-        const others = this.db
-            .prepare<[string, number], EmbeddingRow>(
-                'SELECT id, embedding FROM nodes WHERE id != ? ORDER BY created_at DESC LIMIT ?'
-            )
-            .all(id, this.config.linkCandidatePool);
         const insertEdge = this.db.prepare(
             'INSERT OR REPLACE INTO edges (from_id, to_id, relation, weight) VALUES (?, ?, ?, ?)'
         );
-        for (const other of others) {
-            const sim = documentSimilarity(embedding, fromBuffer(other.embedding), weights);
-            if (sim >= threshold) {
-                insertEdge.run(id, other.id, 'similar', sim);
-                insertEdge.run(other.id, id, 'similar', sim);
-                linkedTo++;
+        if (wasInsert) {
+            const weights = idfWeights(this.corpusStats());
+            const threshold = opts.similarityThreshold ?? this.config.similarityThreshold;
+            // Comparing against every existing node would make each write O(n) and the whole
+            // cache O(n^2) to fill. Capping the candidate pool bounds write cost as the cache
+            // grows, at the cost of not linking against nodes older than the cap — acceptable
+            // for a local dev cache. Only id+embedding are selected: pulling `response` here
+            // would load the whole cache body into memory on every write. Relinking only runs
+            // for a genuinely new entry — an overwrite keeps its existing similarity edges.
+            const others = this.db
+                .prepare<[string, number], EmbeddingRow>(
+                    'SELECT id, embedding FROM nodes WHERE id != ? ORDER BY created_at DESC LIMIT ?'
+                )
+                .all(id, this.config.linkCandidatePool);
+            for (const other of others) {
+                const sim = documentSimilarity(embedding, fromBuffer(other.embedding), weights);
+                if (sim >= threshold) {
+                    insertEdge.run(id, other.id, 'similar', sim);
+                    insertEdge.run(other.id, id, 'similar', sim);
+                    linkedTo++;
+                }
             }
         }
         for (const parentId of opts.derivedFrom ?? []) {
@@ -450,10 +451,12 @@ export class CacheStore {
         const row = this.db
             .prepare<[string], { embedding: Buffer }>('SELECT embedding FROM nodes WHERE id = ?')
             .get(id);
+        // No explicit edge cleanup here: db.ts turns foreign_keys on and edges declares
+        // ON DELETE CASCADE on both ends, so this DELETE already removes every edge touching
+        // the node — pinned by store.test.ts's "deleting an entry also removes its edges".
         const info = this.db.prepare('DELETE FROM nodes WHERE id = ?').run(id);
         if (info.changes === 0) return false;
         if (row) this.removeFromDocFreq(fromBuffer(row.embedding));
-        this.db.prepare('DELETE FROM edges WHERE from_id = ? OR to_id = ?').run(id, id);
         return true;
     }
 

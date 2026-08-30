@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
@@ -187,6 +187,18 @@ describe('file permissions', () => {
         const nested = join(dir, 'nested', 'cache.db');
         const inner = openDb(nested);
         const mode = statSync(join(dir, 'nested')).mode & 0o777;
+        inner.close();
+        assert.equal(mode & 0o077, 0, `expected owner-only directory, got ${mode.toString(8)}`);
+    });
+
+    test('a pre-existing directory with looser permissions is still locked down', () => {
+        // mkdirSync's mode option only applies to a directory it actually creates — a directory
+        // that already exists (e.g. left behind by a default umask, or an older nowhereman
+        // version) keeps whatever permissions it already had unless something chmods it.
+        const preExisting = join(dir, 'already-here');
+        mkdirSync(preExisting, { mode: 0o755 });
+        const inner = openDb(join(preExisting, 'cache.db'));
+        const mode = statSync(preExisting).mode & 0o777;
         inner.close();
         assert.equal(mode & 0o077, 0, `expected owner-only directory, got ${mode.toString(8)}`);
     });

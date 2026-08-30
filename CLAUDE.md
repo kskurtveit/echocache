@@ -197,6 +197,15 @@ Any other MCP-capable host takes the same launch command; only the config file d
 - Document frequency (`doc_freq`) must stay in step with `nodes`. Every path that adds or removes
   an entry — write, overwrite, eviction, invalidate — adjusts it, and `store.test.ts` asserts the
   stored counts equal a from-scratch recount. Drift there silently degrades every later score.
+- `db.ts`'s `CREATE TABLE IF NOT EXISTS` has no migration path for a *column* added to an
+  existing table — it only handles a whole table being new, which is why adding `doc_freq` was
+  safe. A future column added to `nodes` on top of a database that predates it will fail with
+  "no such column" rather than migrating, unlike the embedding format (`EMBEDDING_VERSION` /
+  `migrateEmbeddings`) or encryption state (`assertKeyMatchesDatabase`), both of which fail loudly
+  or migrate rather than silently misbehaving. Deliberately not built ahead of a need: there is no
+  pending schema change to migrate, and the package is still unpublished. Follow the existing
+  version-stamp-in-`meta` pattern when one is actually needed, rather than adding a generic
+  migration framework speculatively.
 - A cache failure must surface as an `isError` tool result, never as a silent miss — a miss tells
   the model "go do the work," which is safe; fabricated or swallowed errors are not. `guard()` in
   `src/server.ts` enforces this.

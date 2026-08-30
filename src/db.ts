@@ -19,7 +19,15 @@ function restrictPermissions(path: string): void {
 }
 
 export function openDb(path: string): Database.Database {
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const dir = dirname(path);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    // mkdirSync's mode only applies to a directory it actually creates — one that already
+    // exists keeps whatever permissions it had, so chmod it unconditionally too.
+    try {
+        chmodSync(dir, 0o700);
+    } catch {
+        // Best effort: a filesystem that rejects chmod (e.g. some mounts) is not fatal.
+    }
     const db = new Database(path);
     restrictPermissions(path);
     db.pragma('journal_mode = WAL');

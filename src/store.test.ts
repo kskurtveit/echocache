@@ -84,6 +84,36 @@ describe('get/set round trip', () => {
         assert.equal(store.get('m', 'p')?.response, 'v2');
     });
 
+    test('re-setting an existing key still records newly declared derived_from parents', () => {
+        const store = newStore();
+        const parent = store.set({ model: 'm', prompt: 'source', response: 'x' });
+        store.set({ model: 'm', prompt: 'p', response: 'v1' });
+
+        const refreshed = store.set({ model: 'm', prompt: 'p', response: 'v2', derivedFrom: [parent.id] });
+
+        assert.ok(refreshed.linkedTo > 0, 'derived_from parent was not linked on refresh');
+        const related = store.related(refreshed.id, { relation: 'derived-from' });
+        assert.ok(
+            related.some(r => r.id === parent.id),
+            'expected the refreshed entry to declare a derived-from edge to its parent'
+        );
+    });
+
+    test('a new key that collides with a row created moments earlier updates it rather than erroring', () => {
+        // The realistic case this pins: process A's existence check finds nothing, then process
+        // B creates the row, then A's write lands — a genuine possibility once the cache is
+        // shared across processes (CLAUDE.md). Two sequential set() calls with an identical new
+        // key exercise the exact SQL path that write collision takes (an atomic upsert, not a
+        // separate check-then-insert with a gap in between) without needing real OS concurrency.
+        const store = newStore();
+        const first = store.set({ model: 'm', prompt: 'brand new key', response: 'from A' });
+        const second = store.set({ model: 'm', prompt: 'brand new key', response: 'from B' });
+
+        assert.equal(second.id, first.id, 'the second write should land on the same row, not error or duplicate');
+        assert.equal(store.stats().entries, 1);
+        assert.equal(store.get('m', 'brand new key')?.response, 'from B');
+    });
+
     test('hit count increments across repeated reads', () => {
         const store = newStore();
         store.set({ model: 'm', prompt: 'p', response: 'x' });
