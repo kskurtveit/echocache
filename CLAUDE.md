@@ -62,7 +62,10 @@ Tuning constants, all calibrated in `retrieval.test.ts`: `HASH_SPACE` 16384, `BR
 ### `store.ts` — cache and graph logic
 
 `CacheStore` is the whole surface; `computeKeyHash(model, prompt, params, cipher?)` is exported
-separately for tests. Types: `NodeRow`, `CacheEntry`, `RelatedEntry`, `QueryMatch`.
+separately for tests. A module-level `freshness(row, now)` computes `{ageSeconds, fresh, stale,
+expired}` from a row's TTL fields and is shared by `toEntry()` and `query()`'s scan-time filter, so
+the two can't disagree on what counts as expired. Types: `NodeRow`, `CacheEntry`, `RelatedEntry`,
+`QueryMatch`.
 
 | Method | Purpose |
 |---|---|
@@ -74,9 +77,14 @@ separately for tests. Types: `NodeRow`, `CacheEntry`, `RelatedEntry`, `QueryMatc
 | `stats()` | Counts, exact-match hit rate, `queryHits`/`queryMisses`, `tokensServed`, evictions, bytes, top entries |
 | `enforceLimits()` | Drop expired entries, then LRU down to the entry and byte ceilings |
 
-Private: `migrateEmbeddings` (re-embeds on `EMBEDDING_VERSION` change), `addToDocFreq` /
+`set()`'s core (doc-freq bookkeeping + the insert/update itself) runs inside a
+`this.db.transaction(fn).immediate()` block, not as separate statements — see Concurrency below.
+
+Private: `nodeCount` (single shared `SELECT COUNT(*)`, replacing three duplicated queries),
+`migrateEmbeddings` (re-embeds on `EMBEDDING_VERSION` change), `addToDocFreq` /
 `removeFromDocFreq` / `corpusStats` (document-frequency bookkeeping),
-`assertKeyMatchesDatabase`, `seal` / `open` (encryption), `toEntry`, `deleteNode`.
+`assertKeyMatchesDatabase`, `seal` / `open` (encryption), `toEntry`, `deleteNode` (atomic
+`DELETE ... RETURNING`, see Concurrency below).
 
 ### `crypto.ts` — `Cipher`
 
@@ -91,7 +99,12 @@ Private: `migrateEmbeddings` (re-embeds on `EMBEDDING_VERSION` change), `addToDo
 `loadConfig()` reads and validates every env var, throwing on bad input; `DEFAULT_CONFIG` is the
 same values as literals for tests.
 `createServer(db, config?)` registers the six tools, each wrapped in `guard()` so a failure
-surfaces as an `isError` result rather than a silent miss.
+surfaces as an `isError` result rather than a silent miss. `cipherFor(config)` (shared by
+`createServer` and `validateConfig`) builds the optional `Cipher` from `config.encryptionKeyHex`,
+so the two can't quietly diverge on what "the configured cipher" means. `validateConfig(db,
+config?)` runs the same startup checks (`CacheStore` construction: cipher parsing, key/database
+match, embedding migration) without building the `McpServer` — for validating a database once at
+startup before committing to the real, connection-scoped construction.
 `main()` in `index.ts` wires config → db → server on stdio, failing loudly at startup.
 
 ## Running
@@ -123,6 +136,21 @@ reusable regardless of which project asked for it.
 **Eviction** runs on every write (`enforceLimits()`): fully-expired entries are dropped first,
 then least-recently-used entries until both ceilings are satisfied. Entries with `ttl_seconds:
 null` never expire but are still subject to the LRU ceilings.
+
+**Concurrency:** the cache is designed to be shared across every project that registers the
+server, so concurrent readers and writers from separate processes are the normal case, not an edge
+case. `db.ts` sets `busy_timeout = 5000` so a second connection's write colliding with an
+in-progress one waits up to 5s instead of failing immediately with `SQLITE_BUSY`. `set()`'s
+read-modify-write (checking the existing embedding, then inserting/updating, then updating
+`doc_freq`) runs inside `this.db.transaction(fn).immediate()`, which takes the write lock before
+its first read — without `.immediate()`, two concurrent writers could both read stale state before
+either wrote, and go stale together. `deleteNode()` is a single `DELETE ... RETURNING embedding`
+rather than a separate `SELECT` then `DELETE`, for the same reason: a read-then-write pair always
+leaves a window for another writer to act in between. Both were real bugs found and fixed this way
+during code review, each verified with a test that injects a concurrent write from inside the
+first read to confirm it's actually rejected — a test that merely checks "does a lock eventually
+cause a failure" doesn't discriminate the fix from the bug, since SQLite blocks on lock contention
+either way.
 
 **Known scaling boundary, not yet a problem:** `enforceLimits()` runs its three passes (expiry,
 entry-count LRU, byte-ceiling LRU) as three separate table scans, and `corpusStats()`/`idfWeights()`

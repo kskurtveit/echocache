@@ -56,7 +56,7 @@ fix goes green, break it deliberately and confirm the test catches it.
 
 ## After changing a dependency
 
-`npm run check` (typecheck + 131 tests) must pass, and `npm run build` must still emit a runnable
+`npm run check` (typecheck + the full test suite) must pass, and `npm run build` must still emit a runnable
 `dist/index.js`. `npm audit` should stay clean. If the change touches the stored schema or the
 embedding format, see the migration notes in `CLAUDE.md` — the embedding format is versioned and
 migrates on open; table columns are not.
