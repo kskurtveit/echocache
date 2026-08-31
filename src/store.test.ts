@@ -195,6 +195,28 @@ describe('freshness (TTL / stale-while-revalidate)', () => {
         assert.equal(matches.length, 0, 'get() would refuse this entry as expired; query() must too');
     });
 
+    test('expired entries do not consume topK slots and hide a fresh match', () => {
+        const store = newStore();
+        const q = 'quarterly earnings summary';
+        // Everything is written first, so enforceLimits() can't sweep anything — nothing has
+        // expired yet at write time. This is the read-mostly cache where expired entries linger.
+        const stale = Array.from({ length: 5 }, (_, n) =>
+            store.set({ model: 'm', prompt: q, response: q, ttlSeconds: 10, params: { n } }).id
+        );
+        store.set({ model: 'm', prompt: 'quarterly earnings', response: 'Revenue grew.', ttlSeconds: null });
+        for (const id of stale) {
+            db.prepare('UPDATE nodes SET created_at = ? WHERE id = ?').run(Date.now() - 60_000, id);
+        }
+
+        // The five expired entries outrank the fresh one, filling every slot of the default
+        // topK before the freshness filter ever runs.
+        const matches = store.query(q, { minSimilarity: 0 });
+
+        assert.equal(matches.length, 1, 'a fresh match was hidden behind expired entries');
+        assert.equal(matches[0]!.prompt, 'quarterly earnings');
+        assert.equal(store.stats().queryMisses, 0, 'a findable fresh entry must not record a miss');
+    });
+
     test('cache_related does not surface an expired entry', () => {
         const store = newStore();
         // derived-from edges point child -> parent, so traversal has to start at the child to
@@ -212,6 +234,42 @@ describe('freshness (TTL / stale-while-revalidate)', () => {
         const related = store.related(child.id, { relation: 'derived-from' });
 
         assert.equal(related.length, 0, 'get() would refuse the expired parent; related() must too');
+    });
+
+    test('traversal continues through an expired node to reach fresh ones behind it', () => {
+        const store = newStore();
+        // The chain AGENTS.md describes: a never-expiring source fingerprint, a derivation on
+        // it, and a further derivation on that. Refusing to *surface* the expired middle link is
+        // correct; refusing to traverse past it strands the fingerprint the cascade depends on.
+        const grandparent = store.set({
+            model: 'source-fingerprint',
+            prompt: 'src/a.ts',
+            response: 'sha',
+            ttlSeconds: null
+        });
+        const mid = store.set({
+            model: 'orient',
+            prompt: 'mid derivation',
+            response: 'y',
+            ttlSeconds: 10,
+            derivedFrom: [grandparent.id]
+        });
+        const leaf = store.set({
+            model: 'orient',
+            prompt: 'leaf derivation',
+            response: 'z',
+            ttlSeconds: null,
+            derivedFrom: [mid.id]
+        });
+        db.prepare('UPDATE nodes SET created_at = ? WHERE id = ?').run(Date.now() - 60_000, mid.id);
+
+        const chain = store.related(leaf.id, { relation: 'derived-from', depth: 3 });
+
+        assert.ok(
+            chain.some(r => r.id === grandparent.id),
+            'a never-expiring fingerprint became unreachable behind an expired derivation'
+        );
+        assert.ok(!chain.some(r => r.id === mid.id), 'the expired middle link must not be surfaced');
     });
 });
 

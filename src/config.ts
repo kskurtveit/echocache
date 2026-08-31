@@ -22,7 +22,10 @@ function intFromEnv(name: string, fallback: number, min = 0): number {
     if (raw === undefined || raw.trim() === '') return fallback;
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed < min) {
-        throw new Error(`${name} must be a ${min > 0 ? 'positive' : 'non-negative'} number, got: ${raw}`);
+        // "at least ${min}" rather than "positive"/"non-negative": the check is `< min`, and a
+        // rejected 0.5 against a minimum of 1 *is* positive — the looser wording contradicts
+        // itself on exactly the values a caller is most likely to mistype.
+        throw new Error(`${name} must be a number of at least ${min}, got: ${raw}`);
     }
     return Math.floor(parsed);
 }

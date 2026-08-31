@@ -95,11 +95,30 @@ interface EmbeddingRow {
     embedding: Buffer;
 }
 
+/** The three small columns that decide freshness, without pulling a row's `response` body. */
+interface FreshnessColumns {
+    created_at: number;
+    ttl_seconds: number | null;
+    stale_while_revalidate_s: number;
+}
+
+/**
+ * Cache-Control-style freshness. Kept as one function so the cheap scan in `query()` and the
+ * full-row `toEntry()` can never disagree about what "expired" means.
+ */
+function freshness(row: FreshnessColumns, now: number): { fresh: boolean; stale: boolean; expired: boolean } {
+    const age = (now - row.created_at) / 1000;
+    const ttl = row.ttl_seconds;
+    const fresh = ttl == null || age <= ttl;
+    const stale = !fresh && (ttl == null || age <= ttl + row.stale_while_revalidate_s);
+    return { fresh, stale, expired: !fresh && !stale };
+}
+
 const ENCRYPTION_META_KEY = 'encryption_verifier';
-const EMBEDDING_META_KEY = 'embedding_version';
+export const EMBEDDING_META_KEY = 'embedding_version';
 
 /** Bumped whenever a change to embed() makes previously stored vectors unreadable. */
-const EMBEDDING_VERSION = '2';
+export const EMBEDDING_VERSION = '2';
 
 /**
  * Floor for `query()`, calibrated against realistic content rather than near-duplicate pairs.
@@ -244,10 +263,7 @@ export class CacheStore {
     private toEntry(row: NodeRow, now: number): CacheEntry {
         const age = (now - row.created_at) / 1000;
         const ttl = row.ttl_seconds;
-        const swr = row.stale_while_revalidate_s;
-        const fresh = ttl == null || age <= ttl;
-        const stale = !fresh && (ttl == null || age <= ttl + swr);
-        const expired = !fresh && !stale;
+        const { fresh, stale, expired } = freshness(row, now);
         return {
             id: row.id,
             model: row.model,
@@ -470,10 +486,16 @@ export class CacheStore {
         const query = prepareQuery(embed(text), weights);
 
         // Score against embeddings alone, then fetch full rows only for the winners — otherwise
-        // every query would pull the entire cache's response bodies into memory.
+        // every query would pull the entire cache's response bodies into memory. The freshness
+        // columns ride along because expired entries have to be dropped *before* the topK slice:
+        // filtering afterwards lets them occupy slots and hide fresh matches ranked behind them,
+        // which is a real miss on a read-mostly cache, since expired rows are only swept on write.
         const scored = this.db
-            .prepare<[], EmbeddingRow>('SELECT id, embedding FROM nodes')
+            .prepare<[], EmbeddingRow & FreshnessColumns>(
+                `SELECT id, embedding, created_at, ttl_seconds, stale_while_revalidate_s FROM nodes`
+            )
             .all()
+            .filter(row => !freshness(row, now).expired)
             .map(row => ({ id: row.id, sim: queryScore(query, fromBuffer(row.embedding), weights) }))
             .filter(s => s.sim >= minSimilarity)
             .sort((a, b) => b.sim - a.sim)
@@ -488,11 +510,9 @@ export class CacheStore {
         for (const { id, sim } of scored) {
             const row = nodeQuery.get(id);
             if (!row) continue;
-            const entry = this.toEntry(row, now);
-            // get() refuses an expired entry outright; query() must hold to the same freshness
-            // contract rather than let semantic recall be a back door around it.
-            if (entry.expired) continue;
-            matches.push({ ...entry, similarity: sim });
+            // Expired entries were already excluded during the scan above, so everything that
+            // reaches here is servable — get()'s freshness contract holds for semantic recall too.
+            matches.push({ ...this.toEntry(row, now), similarity: sim });
             // A recall is a use. Without recording it, an entry reachable only by meaning looks
             // untouched to enforceLimits() and is evicted first — precisely the entries this
             // cache exists to keep.
@@ -533,10 +553,13 @@ export class CacheStore {
                     const row = nodeQuery.get(edge.to_id);
                     if (!row) continue;
                     const entry = this.toEntry(row, now);
-                    // Same freshness contract as get(): an expired node is refused, not
-                    // surfaced. It is still marked visited so traversal doesn't loop back to it.
-                    if (entry.expired) continue;
-                    results.push({ ...entry, relation: edge.relation, weight: edge.weight, depth: d });
+                    // Same freshness contract as get(): an expired node is never surfaced. But it
+                    // still has to be traversed *through* — a derivation chain whose middle link
+                    // ages out would otherwise strand the never-expiring source fingerprints
+                    // behind it, which is exactly what cascade invalidation walks.
+                    if (!entry.expired) {
+                        results.push({ ...entry, relation: edge.relation, weight: edge.weight, depth: d });
+                    }
                     next.push(edge.to_id);
                     if (results.length >= limit) break;
                 }

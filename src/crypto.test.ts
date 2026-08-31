@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openDb } from './db.js';
-import { CacheStore } from './store.js';
+import { CacheStore, EMBEDDING_META_KEY, EMBEDDING_VERSION } from './store.js';
 import { Cipher } from './crypto.js';
 
 let dir: string;
@@ -164,7 +164,11 @@ describe('key / database mismatch', () => {
         // reason regardless of what assertKeyMatchesDatabase does, masking whether this specific
         // check is the one behaving correctly — so pre-stamp the embedding version to make that
         // migration a no-op, isolating the failure to the row-count check this test targets.
-        db.prepare("INSERT INTO meta (key, value) VALUES ('embedding_version', '2')").run();
+        // Stamp with the real constants rather than literals: hardcoding them would stop
+        // matching on the next EMBEDDING_VERSION bump, letting migrateEmbeddings() run and throw
+        // for the unrelated reason this pre-stamp exists to exclude — the assertion would still
+        // pass while testing nothing.
+        db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run(EMBEDDING_META_KEY, EMBEDDING_VERSION);
         db.exec('DROP TABLE nodes');
         assert.throws(() => new CacheStore(db, {}, Cipher.fromHex(KEY)), /no such table/);
     });

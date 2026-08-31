@@ -46,12 +46,12 @@ describe('config', () => {
 
     test('rejects a non-numeric integer setting', () => {
         process.env.NOWHEREMAN_MAX_ENTRIES = 'lots';
-        assert.throws(() => loadConfig(), /must be a non-negative number/);
+        assert.throws(() => loadConfig(), /must be a number of at least 0/);
     });
 
     test('rejects a negative integer setting', () => {
         process.env.NOWHEREMAN_MAX_BYTES = '-1';
-        assert.throws(() => loadConfig(), /must be a non-negative number/);
+        assert.throws(() => loadConfig(), /must be a number of at least 0/);
     });
 
     test('rejects a similarity threshold outside 0..1', () => {
@@ -71,6 +71,6 @@ describe('config', () => {
         // in the linking query, so it turns off the whole similarity graph with no error, one
         // typo away from similarityThreshold's loud validation for the same kind of mistake.
         process.env.NOWHEREMAN_LINK_CANDIDATE_POOL = '0';
-        assert.throws(() => loadConfig(), /must be a positive number/);
+        assert.throws(() => loadConfig(), /must be a number of at least 1/);
     });
 });
