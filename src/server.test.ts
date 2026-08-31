@@ -102,6 +102,24 @@ describe('cache_get / cache_set over MCP', () => {
         const got = payload(await call('cache_get', { model: 'm', prompt: 'forever' }));
         assert.equal((got.entry as Record<string, unknown>).ttlSeconds, null);
     });
+
+    test('rejects a negative ttl_seconds rather than silently storing a dead-on-arrival entry', async () => {
+        // Without a lower bound this "succeeds" and creates an entry that's already expired the
+        // instant it's written -- a silent no-op dressed as success, not a loud failure. A
+        // negative TTL is far more likely an LLM-generated mistake than an intentional value.
+        const result = await call('cache_set', { model: 'm', prompt: 'p', response: 'x', ttl_seconds: -5 });
+        assert.equal(result.isError, true);
+    });
+
+    test('rejects a negative stale_while_revalidate_seconds for the same reason', async () => {
+        const result = await call('cache_set', {
+            model: 'm',
+            prompt: 'p',
+            response: 'x',
+            stale_while_revalidate_seconds: -1
+        });
+        assert.equal(result.isError, true);
+    });
 });
 
 describe('cache_query / cache_related over MCP', () => {

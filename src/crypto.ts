@@ -70,15 +70,18 @@ export class Cipher {
         return createHmac('sha256', this.key).update(payload).digest('hex');
     }
 
-    /** Constant-time check that a stored verifier was produced by this key. */
+    /**
+     * Constant-time check that a stored verifier was produced by this key.
+     *
+     * `Buffer.from(str, 'hex')` never throws in Node — malformed input silently truncates at the
+     * first invalid character — so the length check is what actually rejects a garbage or
+     * corrupted `verifier`, not exception handling. A truncated-but-coincidentally-32-byte
+     * forgery would still fail `timingSafeEqual`, since it can't have hashed correctly without
+     * the key.
+     */
     matchesVerifier(verifier: string): boolean {
         const expected = Buffer.from(this.digest('nowhereman-key-check'), 'hex');
-        let actual: Buffer;
-        try {
-            actual = Buffer.from(verifier, 'hex');
-        } catch {
-            return false;
-        }
+        const actual = Buffer.from(verifier, 'hex');
         return expected.length === actual.length && timingSafeEqual(expected, actual);
     }
 

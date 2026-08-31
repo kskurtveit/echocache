@@ -83,12 +83,14 @@ export function createServer(db: Database.Database, config: Partial<Config> = {}
                 ttl_seconds: z
                     .number()
                     .int()
+                    .nonnegative()
                     .nullable()
                     .optional()
                     .describe('Freshness lifetime in seconds. null = never expires. Default: 1 day'),
                 stale_while_revalidate_seconds: z
                     .number()
                     .int()
+                    .nonnegative()
                     .optional()
                     .describe('Extra window after TTL expiry where the entry is still returned, marked stale'),
                 tags: z.array(z.string()).optional(),

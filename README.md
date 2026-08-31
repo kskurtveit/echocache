@@ -67,6 +67,37 @@ What this is not: a way to avoid reading files, a source of truth, or a substitu
 conversation, which is cheaper and needs no server. nowhereman is for results that must outlive
 the context that produced them.
 
+### What Claude Code already does for free
+
+If your only host is Claude Code, its own [persistent memory](https://docs.claude.com/en/docs/claude-code)
+already does the core of this: write a conclusion to a memory file instead of the files it came
+from, and a later session reads it back before redoing the work. That's the same rule this project
+converged on, running for free, with no server to register. This project's own findings and
+measurements from building it are stored there, not in nowhereman itself — worth noticing, since
+it means the tool wasn't used to cache the very research that produced it.
+
+What's actually different, in order of how much it matters:
+
+- **Cross-project sharing.** Claude Code's memory is scoped to one project directory. nowhereman is
+  one SQLite file any project on the machine can register against, so a conclusion reached in one
+  repo is queryable from another. Real, but unproven: this project's own history shows zero
+  instances of a conclusion actually getting reused across sessions, and cross-project reuse is a
+  narrower bar than that.
+- **Semantic recall.** `cache_query` finds a match by meaning, independent of how it was phrased or
+  which file it's filed under. Memory is retrieved by an always-loaded index plus the agent's own
+  judgment about what to open — no vector search.
+- **Host-agnostic.** Works from Cursor, VS Code, Claude Desktop, or any other MCP client — memory
+  is native to Claude Code specifically.
+- **Explicit freshness.** TTL/stale-while-revalidate freshness and hash-based `derived_from`
+  invalidation catch a source going stale automatically. Memory has neither; staleness is caught
+  only if an agent happens to notice.
+
+For a single user on a single host in one project, memory already captures most of the value here
+for free. What's left as nowhereman's actual case is narrower than "a cache for LLM responses":
+it's specifically sharing a derivation across projects or hosts that don't already share a memory
+store — and that narrower case is unproven, not just untested, until it's been measured the way
+everything else in this document has.
+
 ## Quickstart
 
 ```sh
