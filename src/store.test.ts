@@ -121,6 +121,13 @@ describe('get/set round trip', () => {
         assert.equal(store.get('m', 'p')?.hitCount, 2);
     });
 
+    test('a semantic recall reports hitCount the same way get() does — including this hit', () => {
+        const store = newStore();
+        store.set({ model: 'm', prompt: 'quarterly earnings summary', response: 'Revenue grew 12%.' });
+        const [match] = store.query('quarterly earnings summary', { minSimilarity: 0 });
+        assert.equal(match?.hitCount, 1, 'the recall that just happened should already be counted');
+    });
+
     test('round-trips an empty response and unicode without corruption', () => {
         const store = newStore();
         store.set({ model: 'm', prompt: 'empty', response: '' });
@@ -597,6 +604,59 @@ describe('document-frequency bookkeeping', () => {
         store.set({ model: 'm', prompt: 'stable key', response: 'entirely replaced vocabulary' });
 
         assert.deepEqual(storedDocFreq(), expectedDocFreq());
+    });
+
+    test('deleting a row retires whatever embedding was actually stored, not a stale read', () => {
+        // Sequential calls can't force this: nothing runs "during" a synchronous function, so a
+        // second store's write has to be injected into the middle of deleteNode's own SELECT —
+        // standing in for a second process's write landing between deleteNode's read and its
+        // delete, which real concurrent connections on a shared cache DB can genuinely do.
+        const path = join(dir, 'race.db');
+        const dbA = openDb(path);
+        const storeA = new CacheStore(dbA);
+        const target = storeA.set({ model: 'm', prompt: 'stable key', response: 'original wording here' });
+        storeA.set({ model: 'm', prompt: 'unrelated', response: 'filler content entirely' });
+        const storeB = new CacheStore(openDb(path));
+
+        const originalPrepare = dbA.prepare.bind(dbA);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (dbA as any).prepare = (sql: string) => {
+            const stmt = originalPrepare(sql);
+            if (sql === 'SELECT embedding FROM nodes WHERE id = ?') {
+                const originalGet = stmt.get.bind(stmt);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (stmt as any).get = (...args: unknown[]) => {
+                    const result = originalGet(...(args as [string]));
+                    // The race, forced: a second connection overwrites this exact row's content
+                    // right after deleteNode's read, before its delete runs.
+                    storeB.set({ model: 'm', prompt: 'stable key', response: 'entirely replaced vocabulary instead' });
+                    return result;
+                };
+            }
+            return stmt;
+        };
+
+        storeA.invalidate(target.id);
+
+        const fresh = openDb(path);
+        const remaining = fresh.prepare<[], { c: number }>('SELECT COUNT(*) AS c FROM nodes').get()!;
+        assert.equal(remaining.c, 1);
+        const expected = new Map<number, number>();
+        for (const row of fresh
+            .prepare<[], { prompt: string; response: string }>('SELECT prompt, response FROM nodes')
+            .all()) {
+            for (const bucket of embed(`${row.prompt}\n${row.response}`).buckets) {
+                expected.set(bucket, (expected.get(bucket) ?? 0) + 1);
+            }
+        }
+        const actual = new Map<number, number>();
+        for (const row of fresh
+            .prepare<[], { bucket: number; count: number }>('SELECT bucket, count FROM doc_freq WHERE count > 0')
+            .all()) {
+            actual.set(row.bucket, row.count);
+        }
+        assert.deepEqual(actual, expected, 'doc_freq drifted from a stale read racing a concurrent overwrite');
+        fresh.close();
     });
 });
 

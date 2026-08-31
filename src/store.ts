@@ -106,12 +106,15 @@ interface FreshnessColumns {
  * Cache-Control-style freshness. Kept as one function so the cheap scan in `query()` and the
  * full-row `toEntry()` can never disagree about what "expired" means.
  */
-function freshness(row: FreshnessColumns, now: number): { fresh: boolean; stale: boolean; expired: boolean } {
+function freshness(
+    row: FreshnessColumns,
+    now: number
+): { ageSeconds: number; fresh: boolean; stale: boolean; expired: boolean } {
     const age = (now - row.created_at) / 1000;
     const ttl = row.ttl_seconds;
     const fresh = ttl == null || age <= ttl;
     const stale = !fresh && (ttl == null || age <= ttl + row.stale_while_revalidate_s);
-    return { fresh, stale, expired: !fresh && !stale };
+    return { ageSeconds: age, fresh, stale, expired: !fresh && !stale };
 }
 
 const ENCRYPTION_META_KEY = 'encryption_verifier';
@@ -195,8 +198,12 @@ export class CacheStore {
         for (const bucket of embedding.buckets) stmt.run(bucket);
     }
 
+    private nodeCount(): number {
+        return (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c;
+    }
+
     private corpusStats(): CorpusStats {
-        const docCount = (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c;
+        const docCount = this.nodeCount();
         const docFreq = new Map<number, number>();
         for (const row of this.db
             .prepare<[], { bucket: number; count: number }>('SELECT bucket, count FROM doc_freq WHERE count > 0')
@@ -225,7 +232,7 @@ export class CacheStore {
                 // running it unconditionally would mean any transient failure here — on any
                 // reconnection, encrypted or not — surfaces during server construction instead of
                 // inside a tool call, outside guard()'s protection.
-                const hasRows = (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c > 0;
+                const hasRows = this.nodeCount() > 0;
                 if (hasRows) {
                     throw new Error(
                         'This cache database holds unencrypted entries but NOWHEREMAN_ENCRYPTION_KEY is set. ' +
@@ -261,9 +268,7 @@ export class CacheStore {
     }
 
     private toEntry(row: NodeRow, now: number): CacheEntry {
-        const age = (now - row.created_at) / 1000;
-        const ttl = row.ttl_seconds;
-        const { fresh, stale, expired } = freshness(row, now);
+        const { ageSeconds, fresh, stale, expired } = freshness(row, now);
         return {
             id: row.id,
             model: row.model,
@@ -274,8 +279,8 @@ export class CacheStore {
             createdAt: row.created_at,
             lastAccessedAt: row.last_accessed_at,
             hitCount: row.hit_count,
-            ageSeconds: Math.round(age),
-            ttlSeconds: ttl,
+            ageSeconds: Math.round(ageSeconds),
+            ttlSeconds: row.ttl_seconds,
             fresh,
             stale,
             expired
@@ -463,17 +468,20 @@ export class CacheStore {
     }
 
     private deleteNode(id: string): boolean {
-        // Read the vector before the row goes, so its document-frequency contribution can be
-        // retired — otherwise eviction quietly inflates DF and deflates every later IDF weight.
-        const row = this.db
-            .prepare<[string], { embedding: Buffer }>('SELECT embedding FROM nodes WHERE id = ?')
-            .get(id);
+        // Read-then-delete as two statements would leave a window for a concurrent connection to
+        // overwrite this exact row between them — the cache is shared across every project that
+        // registers the server, so that's a real scenario. DELETE ... RETURNING reads and removes
+        // atomically, so whatever embedding comes back is guaranteed to be what was actually just
+        // deleted, never a stale read racing someone else's write.
+        //
         // No explicit edge cleanup here: db.ts turns foreign_keys on and edges declares
         // ON DELETE CASCADE on both ends, so this DELETE already removes every edge touching
         // the node — pinned by store.test.ts's "deleting an entry also removes its edges".
-        const info = this.db.prepare('DELETE FROM nodes WHERE id = ?').run(id);
-        if (info.changes === 0) return false;
-        if (row) this.removeFromDocFreq(fromBuffer(row.embedding));
+        const row = this.db
+            .prepare<[string], { embedding: Buffer }>('DELETE FROM nodes WHERE id = ? RETURNING embedding')
+            .get(id);
+        if (!row) return false;
+        this.removeFromDocFreq(fromBuffer(row.embedding));
         return true;
     }
 
@@ -501,22 +509,22 @@ export class CacheStore {
             .sort((a, b) => b.sim - a.sim)
             .slice(0, topK);
 
-        const nodeQuery = this.db.prepare<[string], NodeRow>('SELECT * FROM nodes WHERE id = ?');
-        const touch = this.db.prepare(
-            'UPDATE nodes SET hit_count = hit_count + 1, last_accessed_at = ? WHERE id = ?'
+        // A recall is a use. Without recording it, an entry reachable only by meaning looks
+        // untouched to enforceLimits() and is evicted first — precisely the entries this cache
+        // exists to keep. Fetching the row and recording the touch in one UPDATE ... RETURNING
+        // avoids a separate SELECT per match — safe to combine here (unlike get(), which must
+        // decide freshness *before* touching anything) because expired rows were already excluded
+        // during the scan above. As a consequence the returned hitCount is the post-increment
+        // value, same convention as get() already uses.
+        const touch = this.db.prepare<[number, string], NodeRow>(
+            'UPDATE nodes SET hit_count = hit_count + 1, last_accessed_at = ? WHERE id = ? RETURNING *'
         );
         const matches: QueryMatch[] = [];
         let served = 0;
         for (const { id, sim } of scored) {
-            const row = nodeQuery.get(id);
+            const row = touch.get(now, id);
             if (!row) continue;
-            // Expired entries were already excluded during the scan above, so everything that
-            // reaches here is servable — get()'s freshness contract holds for semantic recall too.
             matches.push({ ...this.toEntry(row, now), similarity: sim });
-            // A recall is a use. Without recording it, an entry reachable only by meaning looks
-            // untouched to enforceLimits() and is evicted first — precisely the entries this
-            // cache exists to keep.
-            touch.run(now, id);
             served += row.estimated_tokens;
         }
 
@@ -534,19 +542,26 @@ export class CacheStore {
         const results: RelatedEntry[] = [];
         let frontier = [id];
 
-        const filteredEdgeQuery = this.db.prepare<[string, string], { to_id: string; relation: string; weight: number }>(
-            'SELECT to_id, relation, weight FROM edges WHERE from_id = ? AND relation = ?'
-        );
-        const allEdgeQuery = this.db.prepare<[string], { to_id: string; relation: string; weight: number }>(
-            'SELECT to_id, relation, weight FROM edges WHERE from_id = ?'
-        );
-        const nodeQuery = this.db.prepare<[string], NodeRow>('SELECT * FROM nodes WHERE id = ?');
         const relationFilter = opts.relation;
+        // relationFilter is fixed for the whole traversal, so only the one statement actually
+        // used for this call gets prepared — the other would sit compiled and unused every time.
+        type Edge = { to_id: string; relation: string; weight: number };
+        let edgesFor: (nodeId: string) => Edge[];
+        if (relationFilter) {
+            const stmt = this.db.prepare<[string, string], Edge>(
+                'SELECT to_id, relation, weight FROM edges WHERE from_id = ? AND relation = ?'
+            );
+            edgesFor = nodeId => stmt.all(nodeId, relationFilter);
+        } else {
+            const stmt = this.db.prepare<[string], Edge>('SELECT to_id, relation, weight FROM edges WHERE from_id = ?');
+            edgesFor = nodeId => stmt.all(nodeId);
+        }
+        const nodeQuery = this.db.prepare<[string], NodeRow>('SELECT * FROM nodes WHERE id = ?');
 
         for (let d = 1; d <= depth && results.length < limit; d++) {
             const next: string[] = [];
             for (const nodeId of frontier) {
-                const edges = relationFilter ? filteredEdgeQuery.all(nodeId, relationFilter) : allEdgeQuery.all(nodeId);
+                const edges = edgesFor(nodeId);
                 for (const edge of edges) {
                     if (visited.has(edge.to_id)) continue;
                     visited.add(edge.to_id);
@@ -606,7 +621,7 @@ export class CacheStore {
         bytesStored: number;
         topEntries: { id: string; model: string; prompt: string; hitCount: number }[];
     } {
-        const entries = (this.db.prepare('SELECT COUNT(*) AS c FROM nodes').get() as { c: number }).c;
+        const entries = this.nodeCount();
         const edges = (this.db.prepare('SELECT COUNT(*) AS c FROM edges').get() as { c: number }).c;
         const bytesStored = (
             this.db.prepare('SELECT COALESCE(SUM(LENGTH(response)), 0) AS b FROM nodes').get() as { b: number }
