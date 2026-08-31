@@ -38,6 +38,12 @@ export function openDb(path: string): Database.Database {
     restrictPermissions(path);
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = NORMAL'); // safe durability tradeoff under WAL; avoids an fsync per write
+    // Without this, a second connection's write transaction colliding with this one's gets an
+    // immediate SQLITE_BUSY instead of waiting — and the cache is designed to be shared across
+    // every project that registers the server, so that collision is a real, expected case, not a
+    // rare fault. A brief wait here is what makes CacheStore.set()'s .immediate() transaction
+    // (store.ts) resolve contention transparently instead of erroring on ordinary concurrent use.
+    db.pragma('busy_timeout = 5000');
     db.exec(`
         CREATE TABLE IF NOT EXISTS nodes (
             id                       TEXT PRIMARY KEY,

@@ -328,56 +328,59 @@ export class CacheStore {
         const embedding = embed(`${opts.prompt}\n${opts.response}`);
         const estTokens = estimateTokens(opts.response);
 
-        // Retiring the old row's document-frequency contribution has to happen before the write
-        // below, but reading it here rather than inside that statement leaves a narrow window: a
-        // concurrent writer landing between this SELECT and the write could see its own
-        // contribution retired instead of this one's. That residual imprecision is accepted —
-        // corpusStats() is already a best-effort snapshot, never a fully serialized count — in
-        // exchange for closing the much worse gap below.
-        const existingEmbedding = this.db
-            .prepare<[string], EmbeddingRow>('SELECT embedding FROM nodes WHERE key_hash = ?')
-            .get(keyHash);
-        if (existingEmbedding) this.removeFromDocFreq(fromBuffer(existingEmbedding.embedding));
+        // The retire-then-write sequence below has to run as one unit with respect to another
+        // connection doing the same thing to the same key_hash — the cache is shared across every
+        // project that registers this server, so that's a real scenario, not a hypothetical, and
+        // it's the exact race already closed for deleteNode() and query()'s touch. A deferred
+        // transaction wouldn't be enough (its SELECT wouldn't yet hold the write lock, leaving the
+        // same window open); `.immediate()` acquires it at BEGIN, before this transaction's SELECT
+        // even runs, so a second connection's set() on the same key genuinely waits rather than
+        // interleaving. db.ts sets a busy_timeout so that wait is transparent rather than an
+        // immediate SQLITE_BUSY error.
+        const writeNode = this.db.transaction((): { id: string; wasInsert: boolean } => {
+            const existingEmbedding = this.db
+                .prepare<[string], EmbeddingRow>('SELECT embedding FROM nodes WHERE key_hash = ?')
+                .get(keyHash);
+            if (existingEmbedding) this.removeFromDocFreq(fromBuffer(existingEmbedding.embedding));
 
-        // A separate SELECT-then-INSERT would leave a real gap for two processes to both see "no
-        // existing row" and both try to create one — the cache is shared across every project
-        // that registers this server, so that is a real scenario, not a hypothetical. One atomic
-        // upsert closes it at the engine level: whichever write loses the race updates the
-        // winner's row instead of hitting the key_hash UNIQUE constraint. RETURNING id reveals
-        // which happened — it comes back as candidateId only when this write was the one that
-        // actually inserted.
-        const written = this.db
-            .prepare<unknown[], { id: string }>(
-                `INSERT INTO nodes (id, key_hash, model, prompt, response, params_json, tags_json, embedding,
-                 created_at, last_accessed_at, hit_count, ttl_seconds, stale_while_revalidate_s, estimated_tokens)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-                 ON CONFLICT(key_hash) DO UPDATE SET
-                     response = excluded.response, params_json = excluded.params_json,
-                     tags_json = excluded.tags_json, embedding = excluded.embedding,
-                     created_at = excluded.created_at, last_accessed_at = excluded.last_accessed_at,
-                     ttl_seconds = excluded.ttl_seconds,
-                     stale_while_revalidate_s = excluded.stale_while_revalidate_s,
-                     estimated_tokens = excluded.estimated_tokens
-                 RETURNING id`
-            )
-            .get(
-                candidateId,
-                keyHash,
-                opts.model,
-                this.seal(opts.prompt),
-                this.seal(opts.response),
-                JSON.stringify(params),
-                JSON.stringify(opts.tags ?? []),
-                toBuffer(embedding),
-                now,
-                now,
-                opts.ttlSeconds === undefined ? this.config.defaultTtlSeconds : opts.ttlSeconds,
-                opts.staleWhileRevalidateSeconds ?? 0,
-                estTokens
-            )!;
-        const id = written.id;
-        const wasInsert = id === candidateId;
-        this.addToDocFreq(embedding);
+            // A separate SELECT-then-INSERT would leave a real gap for two processes to both see
+            // "no existing row" and both try to create one. One atomic upsert closes it at the
+            // engine level: whichever write loses the race updates the winner's row instead of
+            // hitting the key_hash UNIQUE constraint. RETURNING id reveals which happened — it
+            // comes back as candidateId only when this write was the one that actually inserted.
+            const written = this.db
+                .prepare<unknown[], { id: string }>(
+                    `INSERT INTO nodes (id, key_hash, model, prompt, response, params_json, tags_json, embedding,
+                     created_at, last_accessed_at, hit_count, ttl_seconds, stale_while_revalidate_s, estimated_tokens)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+                     ON CONFLICT(key_hash) DO UPDATE SET
+                         response = excluded.response, params_json = excluded.params_json,
+                         tags_json = excluded.tags_json, embedding = excluded.embedding,
+                         created_at = excluded.created_at, last_accessed_at = excluded.last_accessed_at,
+                         ttl_seconds = excluded.ttl_seconds,
+                         stale_while_revalidate_s = excluded.stale_while_revalidate_s,
+                         estimated_tokens = excluded.estimated_tokens
+                     RETURNING id`
+                )
+                .get(
+                    candidateId,
+                    keyHash,
+                    opts.model,
+                    this.seal(opts.prompt),
+                    this.seal(opts.response),
+                    JSON.stringify(params),
+                    JSON.stringify(opts.tags ?? []),
+                    toBuffer(embedding),
+                    now,
+                    now,
+                    opts.ttlSeconds === undefined ? this.config.defaultTtlSeconds : opts.ttlSeconds,
+                    opts.staleWhileRevalidateSeconds ?? 0,
+                    estTokens
+                )!;
+            this.addToDocFreq(embedding);
+            return { id: written.id, wasInsert: written.id === candidateId };
+        });
+        const { id, wasInsert } = writeNode.immediate();
         bump(this.db, 'sets');
 
         let linkedTo = 0;

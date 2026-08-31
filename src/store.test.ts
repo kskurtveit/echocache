@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type Database from 'better-sqlite3';
+import Database from 'better-sqlite3';
 import { openDb } from './db.js';
 import { CacheStore, computeKeyHash } from './store.js';
 import { embed } from './embed.js';
@@ -606,35 +606,45 @@ describe('document-frequency bookkeeping', () => {
         assert.deepEqual(storedDocFreq(), expectedDocFreq());
     });
 
-    test('deleting a row retires whatever embedding was actually stored, not a stale read', () => {
-        // Sequential calls can't force this: nothing runs "during" a synchronous function, so a
-        // second store's write has to be injected into the middle of deleteNode's own SELECT —
-        // standing in for a second process's write landing between deleteNode's read and its
-        // delete, which real concurrent connections on a shared cache DB can genuinely do.
+    test('deleteNode issues one atomic statement, never a separate read then delete', () => {
+        // This is the property that actually closes the race, and the only thing left worth
+        // testing at this level: since read-and-delete is one indivisible SQL statement, there is
+        // no window between two separate statements for a concurrent connection's write to land
+        // in — not something a JS-level test can force anymore, because there's no "during" a
+        // single statement to inject into. A prior version of this test tried to inject a
+        // concurrent write by intercepting the *old* two-statement SQL text; once the fix landed,
+        // that text was never issued again, so the intercept silently stopped firing and the test
+        // passed without exercising anything. This version asserts the structural fact that makes
+        // the old approach obsolete, and fails loudly if the vulnerable two-statement form ever
+        // comes back.
+        const store = newStore();
+        const target = store.set({ model: 'm', prompt: 'p', response: 'r' });
+
+        const issued: string[] = [];
+        const originalPrepare = db.prepare.bind(db);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (db as any).prepare = (sql: string) => {
+            if (sql.includes('FROM nodes') && sql.includes('embedding')) issued.push(sql);
+            return originalPrepare(sql);
+        };
+
+        store.invalidate(target.id);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (db as any).prepare = originalPrepare;
+
+        assert.deepEqual(issued, ['DELETE FROM nodes WHERE id = ? RETURNING embedding']);
+    });
+
+    test('deleting a row retires whatever embedding is actually stored, not a stale read', () => {
+        // No interception needed: a real second connection overwrites the row before the delete
+        // runs at all, then the delete's own atomicity (pinned by the test above) guarantees it
+        // sees that same current state — there is nothing else in between for it to race against.
         const path = join(dir, 'race.db');
-        const dbA = openDb(path);
-        const storeA = new CacheStore(dbA);
+        const storeA = new CacheStore(openDb(path));
         const target = storeA.set({ model: 'm', prompt: 'stable key', response: 'original wording here' });
         storeA.set({ model: 'm', prompt: 'unrelated', response: 'filler content entirely' });
         const storeB = new CacheStore(openDb(path));
-
-        const originalPrepare = dbA.prepare.bind(dbA);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (dbA as any).prepare = (sql: string) => {
-            const stmt = originalPrepare(sql);
-            if (sql === 'SELECT embedding FROM nodes WHERE id = ?') {
-                const originalGet = stmt.get.bind(stmt);
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                (stmt as any).get = (...args: unknown[]) => {
-                    const result = originalGet(...(args as [string]));
-                    // The race, forced: a second connection overwrites this exact row's content
-                    // right after deleteNode's read, before its delete runs.
-                    storeB.set({ model: 'm', prompt: 'stable key', response: 'entirely replaced vocabulary instead' });
-                    return result;
-                };
-            }
-            return stmt;
-        };
+        storeB.set({ model: 'm', prompt: 'stable key', response: 'entirely replaced vocabulary instead' });
 
         storeA.invalidate(target.id);
 
@@ -656,6 +666,76 @@ describe('document-frequency bookkeeping', () => {
             actual.set(row.bucket, row.count);
         }
         assert.deepEqual(actual, expected, 'doc_freq drifted from a stale read racing a concurrent overwrite');
+        fresh.close();
+    });
+
+    test('set() reads under the write lock, so a concurrent writer cannot interleave and go stale', () => {
+        // The same class of race deleteNode() and query() were fixed for above: set() reads a
+        // row's embedding to retire its doc_freq contribution before writing the new one. A plain
+        // write statement blocks on lock contention regardless of this fix — SQLite serializes any
+        // write either way — so that alone doesn't prove anything; what actually matters is
+        // whether the *read* happens before or after the lock is acquired. If it happens before
+        // (the bug), a second connection can complete an entire set() — read, write, commit — in
+        // the gap, and the first connection's write then proceeds on a stale read, permanently
+        // losing that second write's doc_freq contribution. .immediate() acquires the lock at
+        // BEGIN, before the read runs, so the second connection's set() cannot get in at all —
+        // proven here by actually injecting it into that exact gap and confirming it's rejected.
+        const path = join(dir, 'race2.db');
+        const dbA = openDb(path);
+        const storeA = new CacheStore(dbA);
+        // Short busy_timeout so this test resolves in milliseconds: storeB's injected call runs
+        // synchronously inside storeA's own transaction, so if storeB had to wait out db.ts's
+        // real 5-second default, this test would too.
+        const dbB = new Database(path);
+        dbB.pragma('busy_timeout = 50');
+        const storeB = new CacheStore(dbB);
+
+        let injectedThrew: string | null = null;
+        const originalPrepare = dbA.prepare.bind(dbA);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (dbA as any).prepare = (sql: string) => {
+            const stmt = originalPrepare(sql);
+            if (sql === 'SELECT embedding FROM nodes WHERE key_hash = ?') {
+                const originalGet = stmt.get.bind(stmt);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                (stmt as any).get = (...args: unknown[]) => {
+                    try {
+                        storeB.set({ model: 'm', prompt: 'contended', response: 'from B, injected mid-read' });
+                    } catch (err) {
+                        injectedThrew = (err as Error).message;
+                    }
+                    return originalGet(...(args as [string]));
+                };
+            }
+            return stmt;
+        };
+
+        storeA.set({ model: 'm', prompt: 'contended', response: 'from A' });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (dbA as any).prepare = originalPrepare;
+
+        assert.match(
+            injectedThrew ?? '',
+            /database is locked/i,
+            `expected the concurrent set() to be rejected outright, not silently interleave (got: ${injectedThrew})`
+        );
+
+        const fresh = openDb(path);
+        const expected = new Map<number, number>();
+        for (const row of fresh
+            .prepare<[], { prompt: string; response: string }>('SELECT prompt, response FROM nodes')
+            .all()) {
+            for (const bucket of embed(`${row.prompt}\n${row.response}`).buckets) {
+                expected.set(bucket, (expected.get(bucket) ?? 0) + 1);
+            }
+        }
+        const actual = new Map<number, number>();
+        for (const row of fresh
+            .prepare<[], { bucket: number; count: number }>('SELECT bucket, count FROM doc_freq WHERE count > 0')
+            .all()) {
+            actual.set(row.bucket, row.count);
+        }
+        assert.deepEqual(actual, expected);
         fresh.close();
     });
 });
