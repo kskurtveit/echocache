@@ -294,6 +294,9 @@ rest — backups, disk images, another user on the box — not a compromised hos
 sourcemaps on) and marks `dist/index.js` executable; the shebang makes it directly runnable. The
 `files` allowlist keeps the tarball to `dist` plus docs — verify with `npm pack --dry-run`.
 
-The package is still `private: true`: publishing is a deliberate future step, not something to
-trip into. Removing that flag is the only remaining gate — `prepublishOnly` already runs
-`check` + `build`.
+`server.json` at the repo root is the manifest for the official [MCP Server
+Registry](https://modelcontextprotocol.io/registry/quickstart): its `name` must match
+`package.json`'s `mcpName` (`io.github.kskurtveit/nowhereman`), and both `version` fields must be
+bumped together with the npm version on every release. Publishing there is a separate step from
+`npm publish` — the registry only stores metadata pointing at the npm package, via the
+`mcp-publisher` CLI (`mcp-publisher login github` then `mcp-publisher publish`).
