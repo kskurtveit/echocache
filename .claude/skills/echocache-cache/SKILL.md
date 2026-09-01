@@ -1,11 +1,11 @@
 ---
-name: nowhereman-cache
-description: Use the nowhereman MCP cache (cache_get/cache_set/cache_query/cache_related/cache_invalidate) around work that is expensive to PRODUCE and safe to reuse — a cached LLM response for a long generation, a multi-step research or reasoning chain, a derived analysis or judgment call, an expensive API result — so it need not be regenerated later. Trigger before starting such work, and after producing a result worth keeping. Do NOT trigger for plain file reads, greps or globs, or for locating code: those cost the same or more from cache than from doing the work directly. Do NOT trigger for stateful or live-state checks (git status, test runs, health checks, git push) or anything with side effects.
+name: echocache-cache
+description: Use the echocache MCP cache (cache_get/cache_set/cache_query/cache_related/cache_invalidate) around work that is expensive to PRODUCE and safe to reuse — a cached LLM response for a long generation, a multi-step research or reasoning chain, a derived analysis or judgment call, an expensive API result — so it need not be regenerated later. Trigger before starting such work, and after producing a result worth keeping. Do NOT trigger for plain file reads, greps or globs, or for locating code: those cost the same or more from cache than from doing the work directly. Do NOT trigger for stateful or live-state checks (git status, test runs, health checks, git push) or anything with side effects.
 ---
 
-# nowhereman cache protocol
+# echocache cache protocol
 
-nowhereman is an MCP server exposing a **response cache**: exact-match lookup with HTTP-style
+echocache is an MCP server exposing a **response cache**: exact-match lookup with HTTP-style
 freshness (`cache_get`/`cache_set`), plus a similarity graph for semantic recall
 (`cache_query`/`cache_related`) and dependency-aware invalidation (`cache_invalidate`). Think of
 it the way an HTTP cache thinks of a request: `cache_get` checks `(model, prompt, params)` against
@@ -65,7 +65,7 @@ spares the rest. A TTL cannot detect a source change; this can.
 
 `cache_set` returns `{ id, linkedTo, evicted }`. `evicted` is how many entries the write pushed
 out to stay under the cache's ceilings — a consistently non-zero value means the cache is
-thrashing and its limits (`NOWHEREMAN_MAX_ENTRIES` / `NOWHEREMAN_MAX_BYTES`) are too small for
+thrashing and its limits (`ECHOCACHE_MAX_ENTRIES` / `ECHOCACHE_MAX_BYTES`) are too small for
 what's being stored. Worth mentioning to the user; not worth reacting to on a single write.
 
 ## Re-orientation across sessions (a narrower, conditional case)
@@ -120,7 +120,7 @@ about.
 
 ## Checking whether it's helping
 
-Use the `nowhereman-gain` skill, or call `cache_stats` directly, to see hit rate, semantic recall
+Use the `echocache-gain` skill, or call `cache_stats` directly, to see hit rate, semantic recall
 (`queryHits`/`queryMisses`), and `tokensServed` — the tokens handed back from cache. Read it
 carefully: `tokensServed` equals tokens *saved* only for entries that stand in for work which
 would otherwise be regenerated. A cache full of file reads or locations reports a large

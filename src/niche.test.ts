@@ -25,7 +25,7 @@ import { CacheStore } from './store.js';
 let dir: string;
 
 beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'nowhereman-niche-'));
+    dir = mkdtempSync(join(tmpdir(), 'echocache-niche-'));
 });
 
 afterEach(() => {

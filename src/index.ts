@@ -31,7 +31,7 @@ function main(): void {
     try {
         config = loadConfig();
     } catch (err) {
-        console.error(`[nowhereman] invalid configuration: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`[echocache] invalid configuration: ${err instanceof Error ? err.message : String(err)}`);
         process.exit(1);
     }
 
@@ -40,7 +40,7 @@ function main(): void {
         db = openDb(config.dbPath);
     } catch (err) {
         console.error(
-            `[nowhereman] could not open cache database at ${config.dbPath}: ` +
+            `[echocache] could not open cache database at ${config.dbPath}: ` +
                 `${err instanceof Error ? err.message : String(err)}`
         );
         process.exit(1);
@@ -53,7 +53,7 @@ function main(): void {
     try {
         validateConfig(db, config);
     } catch (err) {
-        console.error(`[nowhereman] ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`[echocache] ${err instanceof Error ? err.message : String(err)}`);
         db.close();
         process.exit(1);
     }
@@ -62,7 +62,7 @@ function main(): void {
         // Out-of-band transport errors are reporting-only (never alter the wire), but going
         // silent on them would contradict this project's own rule that a failure must surface,
         // never disappear — see the `guard()` convention in server.ts.
-        onerror: err => console.error(`[nowhereman] transport error: ${err.message}`)
+        onerror: err => console.error(`[echocache] transport error: ${err.message}`)
     });
 
     const exit = () => {
@@ -72,7 +72,7 @@ function main(): void {
     process.on('SIGTERM', exit);
 
     console.error(
-        `[nowhereman] MCP cache server on stdio — db: ${config.dbPath}, ` +
+        `[echocache] MCP cache server on stdio — db: ${config.dbPath}, ` +
             `max ${config.maxEntries} entries / ${Math.round(config.maxBytes / 1024 / 1024)}MB, ` +
             `encryption: ${config.encryptionKeyHex ? 'on' : 'off'}`
     );

@@ -1,16 +1,16 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.kskurtveit/nowhereman",
+  "name": "io.github.kskurtveit/echocache",
   "description": "MCP caching server: exact-match response cache with HTTP-style freshness semantics, plus a similarity graph for semantic recall of related cached results.",
   "repository": {
-    "url": "https://github.com/kskurtveit/nowhereman",
+    "url": "https://github.com/kskurtveit/echocache",
     "source": "github"
   },
   "version": "0.1.0",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "nowhereman",
+      "identifier": "echocache",
       "version": "0.1.0",
       "transport": {
         "type": "stdio"

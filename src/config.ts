@@ -42,18 +42,18 @@ function floatFromEnv(name: string, fallback: number, min: number, max: number):
 
 export function loadConfig(): Config {
     return {
-        dbPath: process.env.NOWHEREMAN_DB_PATH ?? join(homedir(), '.nowhereman', 'cache.db'),
-        maxEntries: intFromEnv('NOWHEREMAN_MAX_ENTRIES', 10_000),
-        maxBytes: intFromEnv('NOWHEREMAN_MAX_BYTES', 256 * 1024 * 1024),
-        defaultTtlSeconds: intFromEnv('NOWHEREMAN_DEFAULT_TTL_SECONDS', 60 * 60 * 24),
-        similarityThreshold: floatFromEnv('NOWHEREMAN_SIMILARITY_THRESHOLD', 0.25, 0, 1),
-        linkCandidatePool: intFromEnv('NOWHEREMAN_LINK_CANDIDATE_POOL', 500, 1),
-        encryptionKeyHex: process.env.NOWHEREMAN_ENCRYPTION_KEY?.trim() || undefined
+        dbPath: process.env.ECHOCACHE_DB_PATH ?? join(homedir(), '.echocache', 'cache.db'),
+        maxEntries: intFromEnv('ECHOCACHE_MAX_ENTRIES', 10_000),
+        maxBytes: intFromEnv('ECHOCACHE_MAX_BYTES', 256 * 1024 * 1024),
+        defaultTtlSeconds: intFromEnv('ECHOCACHE_DEFAULT_TTL_SECONDS', 60 * 60 * 24),
+        similarityThreshold: floatFromEnv('ECHOCACHE_SIMILARITY_THRESHOLD', 0.25, 0, 1),
+        linkCandidatePool: intFromEnv('ECHOCACHE_LINK_CANDIDATE_POOL', 500, 1),
+        encryptionKeyHex: process.env.ECHOCACHE_ENCRYPTION_KEY?.trim() || undefined
     };
 }
 
 export const DEFAULT_CONFIG: Config = {
-    dbPath: join(homedir(), '.nowhereman', 'cache.db'),
+    dbPath: join(homedir(), '.echocache', 'cache.db'),
     maxEntries: 10_000,
     maxBytes: 256 * 1024 * 1024,
     defaultTtlSeconds: 60 * 60 * 24,

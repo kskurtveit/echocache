@@ -1,9 +1,9 @@
-# nowhereman — MCP caching tool
+# echocache — MCP caching tool
 
-This project ships the `nowhereman` MCP server: a **cache for LLM responses**, keyed like an HTTP
+This project ships the `echocache` MCP server: a **cache for LLM responses**, keyed like an HTTP
 cache and read like a knowledge graph — `cache_get`/`cache_set` behave like `Cache-Control`
 freshness against `(model, prompt, params)`, and `cache_query`/`cache_related` add semantic recall
-of related past results. If you are an agent with `nowhereman`'s tools available (registered under
+of related past results. If you are an agent with `echocache`'s tools available (registered under
 this or another project), follow the protocol below. If you're a human or agent working *on* this
 repo's code, see `CLAUDE.md` too.
 
@@ -204,7 +204,7 @@ that save no tokens is a straight loss. Safe to cache and worth caching are diff
 ## Secrets
 
 Cached entries are written to a local database file. Permissions are locked to the owner, and
-`NOWHEREMAN_ENCRYPTION_KEY` can encrypt entry contents at rest — but neither makes it safe to
+`ECHOCACHE_ENCRYPTION_KEY` can encrypt entry contents at rest — but neither makes it safe to
 deliberately cache credentials. Don't route API keys, tokens, or private key material through
 `cache_set`; re-reading the source is cheaper than leaking it.
 

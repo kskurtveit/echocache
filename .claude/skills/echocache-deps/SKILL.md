@@ -1,9 +1,9 @@
 ---
-name: nowhereman-deps
-description: Check a library API or upgrade a dependency in the nowhereman repo — which packages it depends on, where each one's real type surface lives, and the verification steps that caught actual bugs here. Use before writing or changing code that calls @modelcontextprotocol/server, better-sqlite3, zod, or a Node built-in, and before adopting an API that documentation calls current. Complements the context7-mcp skill: that one fetches docs, this one says what to do with them in this repo.
+name: echocache-deps
+description: Check a library API or upgrade a dependency in the echocache repo — which packages it depends on, where each one's real type surface lives, and the verification steps that caught actual bugs here. Use before writing or changing code that calls @modelcontextprotocol/server, better-sqlite3, zod, or a Node built-in, and before adopting an API that documentation calls current. Complements the context7-mcp skill: that one fetches docs, this one says what to do with them in this repo.
 ---
 
-# Checking a dependency API in nowhereman
+# Checking a dependency API in echocache
 
 Use `context7-mcp` to fetch the docs. This skill covers what the docs alone won't tell you here.
 
@@ -45,7 +45,7 @@ fix goes green, break it deliberately and confirm the test catches it.
 ## Local gotchas
 
 - **A registered MCP server keeps running the code it started with.** After changing `src/`, an
-  already-registered `nowhereman` serves the old build until the host restarts. Same for agent
+  already-registered `echocache` serves the old build until the host restarts. Same for agent
   definitions and newly added MCP servers — they load at session start. See `CLAUDE.md`.
 - **`createServer`'s factory is re-invoked per connection/request**, so a throw during server
   *construction* lands outside `guard()` and surfaces as a raw transport error rather than a clean

@@ -177,7 +177,7 @@ export class CacheStore {
 
         if (rows.length > 0) {
             console.error(
-                `[nowhereman] re-embedded ${rows.length} cache entries for embedding v${EMBEDDING_VERSION}; ` +
+                `[echocache] re-embedded ${rows.length} cache entries for embedding v${EMBEDDING_VERSION}; ` +
                     'similarity links will rebuild as entries are written'
             );
         }
@@ -235,8 +235,8 @@ export class CacheStore {
                 const hasRows = this.nodeCount() > 0;
                 if (hasRows) {
                     throw new Error(
-                        'This cache database holds unencrypted entries but NOWHEREMAN_ENCRYPTION_KEY is set. ' +
-                            'Point NOWHEREMAN_DB_PATH at a new file, or clear the existing one, to start encrypted.'
+                        'This cache database holds unencrypted entries but ECHOCACHE_ENCRYPTION_KEY is set. ' +
+                            'Point ECHOCACHE_DB_PATH at a new file, or clear the existing one, to start encrypted.'
                     );
                 }
                 setMeta(this.db, ENCRYPTION_META_KEY, this.cipher.makeVerifier());
@@ -244,8 +244,8 @@ export class CacheStore {
             }
             if (!this.cipher.matchesVerifier(stored)) {
                 throw new Error(
-                    'NOWHEREMAN_ENCRYPTION_KEY does not match the key this cache database was created with. ' +
-                        'Use the original key, or point NOWHEREMAN_DB_PATH at a new file.'
+                    'ECHOCACHE_ENCRYPTION_KEY does not match the key this cache database was created with. ' +
+                        'Use the original key, or point ECHOCACHE_DB_PATH at a new file.'
                 );
             }
             return;
@@ -253,8 +253,8 @@ export class CacheStore {
 
         if (stored !== null) {
             throw new Error(
-                'This cache database is encrypted but NOWHEREMAN_ENCRYPTION_KEY is not set. ' +
-                    'Set the original key, or point NOWHEREMAN_DB_PATH at a new file.'
+                'This cache database is encrypted but ECHOCACHE_ENCRYPTION_KEY is not set. ' +
+                    'Set the original key, or point ECHOCACHE_DB_PATH at a new file.'
             );
         }
     }

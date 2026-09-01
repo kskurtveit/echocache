@@ -1,9 +1,9 @@
 ---
-name: nowhereman-gain
-description: Report what the nowhereman MCP cache is doing right now - entry/edge counts, hit rate, and tokens served. Invoke when the user asks how much the cache is helping, wants savings/efficiency numbers, or asks for something like "rtk gain" but for nowhereman.
+name: echocache-gain
+description: Report what the echocache MCP cache is doing right now - entry/edge counts, hit rate, and tokens served. Invoke when the user asks how much the cache is helping, wants savings/efficiency numbers, or asks for something like "rtk gain" but for echocache.
 ---
 
-# nowhereman-gain
+# echocache-gain
 
 Call the `cache_stats` tool and present the result as a short report:
 
@@ -20,11 +20,11 @@ Call the `cache_stats` tool and present the result as a short report:
   and every `cache_query` recall (from each entry's response length at ~4 chars/token).
 - **Evictions** — `evictions`, entries dropped to stay under the configured ceilings. A large
   number relative to `sets` means the cache is thrashing: it's evicting things about as fast as
-  it stores them, so raising `NOWHEREMAN_MAX_ENTRIES` / `NOWHEREMAN_MAX_BYTES` would likely lift
+  it stores them, so raising `ECHOCACHE_MAX_ENTRIES` / `ECHOCACHE_MAX_BYTES` would likely lift
   the hit rate.
 - **Top entries** — `topEntries`, the highest-`hitCount` cached results; call out if any of them
   look like they shouldn't be cached (state checks, anything with side effects) per the
-  `nowhereman-cache` skill's guardrails — a frequently-hit entry that shouldn't exist is a bug to
+  `echocache-cache` skill's guardrails — a frequently-hit entry that shouldn't exist is a bug to
   flag, not a win to report.
 
 Keep the report to a few lines — numbers plus one sentence of interpretation, not a dump of raw
@@ -39,7 +39,7 @@ saving only for entries that stand in for work that would otherwise be regenerat
 generation, a derived analysis. An entry that merely caches a file read hands back exactly the
 tokens re-reading the file would have cost, so it saves nothing while still inflating this number.
 If `topEntries` is dominated by file paths, say that the figure overstates the benefit and point
-at the `nowhereman-cache` skill's "what NOT to route through this cache".
+at the `echocache-cache` skill's "what NOT to route through this cache".
 
 If `cache_stats` itself returns `isError: true`, report that the cache is unreachable and quote
 the message — do not substitute zeros, which would read as "the cache is working but empty."

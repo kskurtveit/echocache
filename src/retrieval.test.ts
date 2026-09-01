@@ -22,7 +22,7 @@ function newStore() {
 }
 
 beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'nowhereman-retrieval-'));
+    dir = mkdtempSync(join(tmpdir(), 'echocache-retrieval-'));
     db = openDb(join(dir, 'cache.db'));
 });
 

@@ -1,11 +1,11 @@
 {
-  "name": "nowhereman",
+  "name": "echocache",
   "version": "0.1.0",
   "description": "An MCP caching server: exact-match response cache with HTTP-style freshness semantics, plus a lightweight knowledge graph for semantic recall of related cached results.",
   "license": "MIT",
   "author": "Kristian Skurtveit",
   "type": "module",
-  "mcpName": "io.github.kskurtveit/nowhereman",
+  "mcpName": "io.github.kskurtveit/echocache",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -15,14 +15,14 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kskurtveit/nowhereman.git"
+    "url": "git+https://github.com/kskurtveit/echocache.git"
   },
-  "homepage": "https://github.com/kskurtveit/nowhereman#readme",
+  "homepage": "https://github.com/kskurtveit/echocache#readme",
   "bugs": {
-    "url": "https://github.com/kskurtveit/nowhereman/issues"
+    "url": "https://github.com/kskurtveit/echocache/issues"
   },
   "bin": {
-    "nowhereman": "./dist/index.js"
+    "echocache": "./dist/index.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

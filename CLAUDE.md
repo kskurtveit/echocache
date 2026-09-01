@@ -1,8 +1,8 @@
 @AGENTS.md
 
-# Developing nowhereman
+# Developing echocache
 
-nowhereman is a Model Context Protocol server exposing a cache with two lookup paths:
+echocache is a Model Context Protocol server exposing a cache with two lookup paths:
 
 - **Exact match** (`cache_get` / `cache_set`): sha256 of `(model, normalized prompt, params)` →
   response, with HTTP-style `ttl_seconds` / `stale_while_revalidate_seconds` freshness, mirroring
@@ -122,13 +122,13 @@ All settings are environment variables, read once at startup by `loadConfig()`:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `NOWHEREMAN_DB_PATH` | `~/.nowhereman/cache.db` | SQLite file location |
-| `NOWHEREMAN_MAX_ENTRIES` | `10000` | LRU ceiling on retained entries |
-| `NOWHEREMAN_MAX_BYTES` | `268435456` (256MB) | LRU ceiling on retained response bytes |
-| `NOWHEREMAN_DEFAULT_TTL_SECONDS` | `86400` (1 day) | Freshness lifetime when a caller omits one |
-| `NOWHEREMAN_SIMILARITY_THRESHOLD` | `0.25` | Similarity floor for auto-linking a `similar` edge |
-| `NOWHEREMAN_LINK_CANDIDATE_POOL` | `500` | Recent entries a new write is compared against |
-| `NOWHEREMAN_ENCRYPTION_KEY` | unset | 64 hex chars (32 bytes); enables at-rest encryption |
+| `ECHOCACHE_DB_PATH` | `~/.echocache/cache.db` | SQLite file location |
+| `ECHOCACHE_MAX_ENTRIES` | `10000` | LRU ceiling on retained entries |
+| `ECHOCACHE_MAX_BYTES` | `268435456` (256MB) | LRU ceiling on retained response bytes |
+| `ECHOCACHE_DEFAULT_TTL_SECONDS` | `86400` (1 day) | Freshness lifetime when a caller omits one |
+| `ECHOCACHE_SIMILARITY_THRESHOLD` | `0.25` | Similarity floor for auto-linking a `similar` edge |
+| `ECHOCACHE_LINK_CANDIDATE_POOL` | `500` | Recent entries a new write is compared against |
+| `ECHOCACHE_ENCRYPTION_KEY` | unset | 64 hex chars (32 bytes); enables at-rest encryption |
 
 The cache is shared across every project that registers this server, since a cached response is
 reusable regardless of which project asked for it.
@@ -155,7 +155,7 @@ either way.
 **Known scaling boundary, not yet a problem:** `enforceLimits()` runs its three passes (expiry,
 entry-count LRU, byte-ceiling LRU) as three separate table scans, and `corpusStats()`/`idfWeights()`
 rebuild a dense IDF array from a full `doc_freq` scan on every `set()` and `query()`. Both are
-O(entries) per call, capped by `NOWHEREMAN_MAX_ENTRIES` at 10,000 — fine at that scale, unmeasured
+O(entries) per call, capped by `ECHOCACHE_MAX_ENTRIES` at 10,000 — fine at that scale, unmeasured
 above it. Folding the eviction passes into one, or maintaining IDF weights incrementally rather
 than recomputing them, would both add real correctness risk (eviction ordering, keeping
 incremental state from drifting from a full recount) to score against a performance problem that
@@ -200,11 +200,11 @@ to be unusable while 89 tests passed: the auto-link test compared near-duplicate
 responses, and the query test overrode the floor to 0.3 when the shipped default was 0.5.
 
 **The registered server is a running process, not the working tree.** After changing `src/`, an
-already-registered `nowhereman` keeps serving the old code until the host restarts it — the tell is
+already-registered `echocache` keeps serving the old code until the host restarts it — the tell is
 `cache_stats` still reporting a field you renamed, or `cache_query` behaving the way it did before
 your fix. Verified the confusing way: a dogfooding query returned `[]` against a stale server while
 the same query scored 0.69 against the same database with the current code. Restart the host (or
-`claude mcp remove nowhereman && claude mcp add ...`) before trusting a live result.
+`claude mcp remove echocache && claude mcp add ...`) before trusting a live result.
 
 Renaming a `stats` key also resets that counter, since the old row is still stored under the old
 key. `tokens_saved` -> `tokens_served` cost the historical total; that was a deliberate trade for an
@@ -214,12 +214,12 @@ honest name.
 
 **Claude Code**
 ```
-claude mcp add nowhereman -- npx tsx /path/to/nowhereman/src/index.ts
+claude mcp add echocache -- npx tsx /path/to/echocache/src/index.ts
 ```
 
 **Cursor / VS Code** — add a stdio entry to `.cursor/mcp.json` / `.vscode/mcp.json`:
 ```json
-{ "command": "npx", "args": ["tsx", "/path/to/nowhereman/src/index.ts"] }
+{ "command": "npx", "args": ["tsx", "/path/to/echocache/src/index.ts"] }
 ```
 
 Any other MCP-capable host takes the same launch command; only the config file differs.
@@ -271,17 +271,17 @@ The cache holds whatever agents put through it — file contents, API responses.
 
 - **Always on**: the DB directory is created `0700` and the DB/WAL/SHM files are `0600`, so
   default umask can't leave the cache group- or world-readable on a shared machine.
-- **Opt-in**: set `NOWHEREMAN_ENCRYPTION_KEY` to encrypt the `prompt` and `response` columns with
+- **Opt-in**: set `ECHOCACHE_ENCRYPTION_KEY` to encrypt the `prompt` and `response` columns with
   AES-256-GCM (random IV per value). With a key set, the cache key becomes an HMAC rather than a
   plain SHA-256 — otherwise a DB reader could confirm a guessed prompt by hashing it.
 
 ```sh
-export NOWHEREMAN_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+export ECHOCACHE_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
 ```
 
 A key/database mismatch is refused at startup with an actionable message rather than surfacing as
 an opaque decryption failure on some later read. Turning encryption on or off requires a fresh DB
-(`NOWHEREMAN_DB_PATH`) — there is no in-place migration.
+(`ECHOCACHE_DB_PATH`) — there is no in-place migration.
 
 **What encryption does not protect**: the key comes from the environment of the same machine, so
 anyone who can read that environment or process memory can read the cache. It protects the file at
@@ -296,7 +296,7 @@ sourcemaps on) and marks `dist/index.js` executable; the shebang makes it direct
 
 `server.json` at the repo root is the manifest for the official [MCP Server
 Registry](https://modelcontextprotocol.io/registry/quickstart): its `name` must match
-`package.json`'s `mcpName` (`io.github.kskurtveit/nowhereman`), and both `version` fields must be
+`package.json`'s `mcpName` (`io.github.kskurtveit/echocache`), and both `version` fields must be
 bumped together with the npm version on every release. Publishing there is a separate step from
 `npm publish` — the registry only stores metadata pointing at the npm package, via the
 `mcp-publisher` CLI (`mcp-publisher login github` then `mcp-publisher publish`).

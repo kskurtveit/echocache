@@ -27,13 +27,13 @@ async function call(name: string, args: Record<string, unknown> = {}) {
 }
 
 beforeEach(async () => {
-    dir = mkdtempSync(join(tmpdir(), 'nowhereman-srv-'));
+    dir = mkdtempSync(join(tmpdir(), 'echocache-srv-'));
     db = openDb(join(dir, 'cache.db'));
     const handler = createMcpHandler(() => createServer(db));
     const transport = new StreamableHTTPClientTransport(new URL('http://test.local/mcp'), {
         fetch: (url, init) => handler.fetch(new Request(url, init))
     });
-    client = new Client({ name: 'nowhereman-test', version: '1.0.0' }, { versionNegotiation: { mode: 'auto' } });
+    client = new Client({ name: 'echocache-test', version: '1.0.0' }, { versionNegotiation: { mode: 'auto' } });
     await client.connect(transport);
 });
 
@@ -201,7 +201,7 @@ describe('failure handling', () => {
         const result = await call('cache_get', { model: 'm', prompt: 'p' });
         assert.equal(result.isError, true);
         const text = (result.content as { text: string }[])[0]!.text;
-        assert.match(text, /nowhereman cache_get failed/);
+        assert.match(text, /echocache cache_get failed/);
     });
 
     test('the server still answers other requests after a failure', async () => {

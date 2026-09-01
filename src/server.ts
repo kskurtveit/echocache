@@ -16,9 +16,9 @@ function guard(label: string, fn: () => unknown): ToolResult {
         return { content: [{ type: 'text', text: JSON.stringify(fn()) }] };
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[nowhereman] ${label} failed: ${message}`);
+        console.error(`[echocache] ${label} failed: ${message}`);
         return {
-            content: [{ type: 'text', text: `nowhereman ${label} failed: ${message}` }],
+            content: [{ type: 'text', text: `echocache ${label} failed: ${message}` }],
             isError: true
         };
     }
@@ -43,7 +43,7 @@ export function validateConfig(db: Database.Database, config: Partial<Config> = 
 }
 
 export function createServer(db: Database.Database, config: Partial<Config> = {}): McpServer {
-    const server = new McpServer({ name: 'nowhereman', version: '0.1.0' });
+    const server = new McpServer({ name: 'echocache', version: '0.1.0' });
     const store = new CacheStore(db, config, cipherFor(config));
 
     server.registerTool(

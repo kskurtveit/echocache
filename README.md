@@ -1,4 +1,4 @@
-# nowhereman
+# echocache
 
 An MCP server for a **cached LLM response** — the way an HTTP cache caches an expensive server
 response, not the way a browser caches a static asset. For the agent who doesn't know where it's
@@ -64,7 +64,7 @@ writer did.
 
 What this is not: a way to avoid reading files, a source of truth, or a substitute for
 [prompt caching](https://docs.claude.com/en/docs/build-with-claude/prompt-caching) *within* one
-conversation, which is cheaper and needs no server. nowhereman is for results that must outlive
+conversation, which is cheaper and needs no server. echocache is for results that must outlive
 the context that produced them.
 
 ### What Claude Code already does for free
@@ -73,12 +73,12 @@ If your only host is Claude Code, its own [persistent memory](https://docs.claud
 already does the core of this: write a conclusion to a memory file instead of the files it came
 from, and a later session reads it back before redoing the work. That's the same rule this project
 converged on, running for free, with no server to register. This project's own findings and
-measurements from building it are stored there, not in nowhereman itself — worth noticing, since
+measurements from building it are stored there, not in echocache itself — worth noticing, since
 it means the tool wasn't used to cache the very research that produced it.
 
 What's actually different, in order of how much it matters:
 
-- **Cross-project sharing.** Claude Code's memory is scoped to one project directory. nowhereman is
+- **Cross-project sharing.** Claude Code's memory is scoped to one project directory. echocache is
   one SQLite file any project on the machine can register against, so a conclusion reached in one
   repo is queryable from another. Real, but unproven: this project's own history shows zero
   instances of a conclusion actually getting reused across sessions, and cross-project reuse is a
@@ -93,7 +93,7 @@ What's actually different, in order of how much it matters:
   only if an agent happens to notice.
 
 For a single user on a single host in one project, memory already captures most of the value here
-for free. What's left as nowhereman's actual case is narrower than "a cache for LLM responses":
+for free. What's left as echocache's actual case is narrower than "a cache for LLM responses":
 it's specifically sharing a derivation across projects or hosts that don't already share a memory
 store — and that narrower case is unproven, not just untested, until it's been measured the way
 everything else in this document has.
@@ -108,7 +108,7 @@ npm start
 Then register it with an MCP host — for Claude Code:
 
 ```sh
-claude mcp add nowhereman -- npx tsx /path/to/nowhereman/src/index.ts
+claude mcp add echocache -- npx tsx /path/to/echocache/src/index.ts
 ```
 
 ## Tools
@@ -122,5 +122,5 @@ claude mcp add nowhereman -- npx tsx /path/to/nowhereman/src/index.ts
 | `cache_invalidate`  | Delete an entry, optionally cascading to its dependents                  |
 | `cache_stats`       | Exact-match hit rate, `queryHits`/`queryMisses`, and tokens served       |
 
-Data persists to SQLite at `$NOWHEREMAN_DB_PATH` (default `~/.nowhereman/cache.db`), shared
+Data persists to SQLite at `$ECHOCACHE_DB_PATH` (default `~/.echocache/cache.db`), shared
 across every project that registers the server.

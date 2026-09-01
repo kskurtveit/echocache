@@ -30,7 +30,7 @@ export class Cipher {
         const trimmed = hex.trim();
         if (!/^[0-9a-fA-F]{64}$/.test(trimmed)) {
             throw new Error(
-                'NOWHEREMAN_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes). ' +
+                'ECHOCACHE_ENCRYPTION_KEY must be exactly 64 hex characters (32 bytes). ' +
                     "Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\""
             );
         }
@@ -80,12 +80,12 @@ export class Cipher {
      * the key.
      */
     matchesVerifier(verifier: string): boolean {
-        const expected = Buffer.from(this.digest('nowhereman-key-check'), 'hex');
+        const expected = Buffer.from(this.digest('echocache-key-check'), 'hex');
         const actual = Buffer.from(verifier, 'hex');
         return expected.length === actual.length && timingSafeEqual(expected, actual);
     }
 
     makeVerifier(): string {
-        return this.digest('nowhereman-key-check');
+        return this.digest('echocache-key-check');
     }
 }

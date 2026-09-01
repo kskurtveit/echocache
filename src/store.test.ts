@@ -17,7 +17,7 @@ function newStore() {
 }
 
 beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), 'nowhereman-test-'));
+    dir = mkdtempSync(join(tmpdir(), 'echocache-test-'));
     db = openDb(join(dir, 'cache.db'));
 });
 
