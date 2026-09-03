@@ -264,6 +264,13 @@ Any other MCP-capable host takes the same launch command; only the config file d
   reintroduce a savings figure unless callers declare production cost at `cache_set` time.
 - Never `SELECT *` from `nodes` in a hot path — `response` bodies dominate row size, so scoring
   and scanning queries select `id, embedding` and fetch full rows only for the winners.
+- Commits written with AI assistance carry an `Assisted-by: Claude Code (<model>)` trailer, not
+  `Co-Authored-By:`. The work here is genuinely AI-assisted and the trailer says so — but a model
+  cannot hold copyright, sign a CLA, or bear liability, so naming one as co-author clouds the
+  chain of title this project's MIT license rests on. `Assisted-by:` is the trailer the wider
+  ecosystem has converged on for exactly that reason. History was rewritten once, before the repo
+  went public, to apply this uniformly; commit contents were untouched (verified by identical tree
+  hashes).
 
 ## Security
 
