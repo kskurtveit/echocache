@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { serveStdio, type StdioServerHandle } from '@modelcontextprotocol/server/stdio';
 import { loadConfig } from './config.js';
@@ -78,10 +79,28 @@ function main(): void {
     );
 }
 
-// import.meta.main is the current Node idiom for this check, but it needs Node 24.2+; this
-// project supports Node >=20 (CI tests 20 and 22), so compare the invoked script path instead —
-// the version-compatible equivalent, and what lets this file be imported for testing without
-// starting the real server.
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+/**
+ * True when node was asked to run this module — directly, or through a symlink to it.
+ *
+ * import.meta.main is the current Node idiom, but it needs Node 24.2+ and this project supports
+ * Node >=20 (CI tests 20 and 22), so the invoked script path is compared instead. Both sides go
+ * through realpath first: npm installs a `bin` as a symlink (node_modules/.bin/echocache ->
+ * ../echocache/dist/index.js), so argv[1] is the symlink while import.meta.url is the real file.
+ * Comparing them raw is false, main() never runs, and the process exits 0 having served nothing —
+ * silently, in exactly the form `npx echocache` and every MCP host registration use.
+ */
+export function isMainModule(argv1: string | undefined, moduleUrl: string): boolean {
+    if (!argv1) return false;
+    const resolve = (path: string): string => {
+        try {
+            return realpathSync(path);
+        } catch {
+            return path; // Not on disk (deleted, or a virtual entrypoint): fall back to the raw path.
+        }
+    };
+    return resolve(argv1) === resolve(fileURLToPath(moduleUrl));
+}
+
+if (isMainModule(process.argv[1], import.meta.url)) {
     main();
 }
