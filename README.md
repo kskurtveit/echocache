@@ -1,9 +1,8 @@
 # echocache
 
 An MCP server for a **cached LLM response** — the way an HTTP cache caches an expensive server
-response, not the way a browser caches a static asset. For the agent who doesn't know where it's
-going to, but doesn't need to redo the last mile of work to get there. ("He's a real nowhere
-man... doesn't have a point of view" — but he does have a cache.)
+response, not the way a browser caches a static asset. Ask a question you already answered once,
+and the answer echoes back instead of being re-derived.
 
 Two lookup paths, inspired by two different kinds of caching:
 
@@ -17,9 +16,8 @@ Two lookup paths, inspired by two different kinds of caching:
   cascade through those `derived-from` edges when a source changes.
 
 Runs as a standard stdio MCP server, so it works with Claude Code, Claude Desktop, Cursor, VS
-Code + Copilot, or any other MCP-capable host — see [`CLAUDE.md`](./CLAUDE.md) for registration
-commands and [`AGENTS.md`](./AGENTS.md) for the tool-use protocol any connected agent should
-follow.
+Code + Copilot, or any other MCP-capable host — see [Install](#install) below, and
+[`AGENTS.md`](./AGENTS.md) for the tool-use protocol any connected agent should follow.
 
 ## What it's for — and what it isn't
 
@@ -98,18 +96,57 @@ it's specifically sharing a derivation across projects or hosts that don't alrea
 store — and that narrower case is unproven, not just untested, until it's been measured the way
 everything else in this document has.
 
-## Quickstart
+## Install
+
+No clone or build needed — register it straight from npm.
+
+**Claude Code**
 
 ```sh
-npm install
-npm start
+claude mcp add echocache -- npx -y echocache
 ```
 
-Then register it with an MCP host — for Claude Code:
+**Claude Desktop / Cursor / VS Code** — add a stdio entry to the host's MCP config
+(`claude_desktop_config.json`, `.cursor/mcp.json`, `.vscode/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "echocache": {
+      "command": "npx",
+      "args": ["-y", "echocache"]
+    }
+  }
+}
+```
+
+Any other MCP-capable host takes the same launch command; only the config file differs. Then point
+your agent at [`AGENTS.md`](./AGENTS.md) so it knows *when* to reach for the cache — the protocol
+matters more than the wiring, since caching the wrong things costs tokens rather than saving them.
+
+### Configuration
+
+Every setting is an environment variable, all optional:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ECHOCACHE_DB_PATH` | `~/.echocache/cache.db` | SQLite file location |
+| `ECHOCACHE_MAX_ENTRIES` | `10000` | LRU ceiling on retained entries |
+| `ECHOCACHE_MAX_BYTES` | `268435456` (256MB) | LRU ceiling on retained response bytes |
+| `ECHOCACHE_DEFAULT_TTL_SECONDS` | `86400` (1 day) | Freshness lifetime when a caller omits one |
+| `ECHOCACHE_SIMILARITY_THRESHOLD` | `0.25` | Similarity floor for auto-linking entries |
+| `ECHOCACHE_LINK_CANDIDATE_POOL` | `500` | Recent entries a new write is compared against |
+| `ECHOCACHE_ENCRYPTION_KEY` | unset | 64 hex chars (32 bytes); enables AES-256-GCM at rest |
+
+The database directory is created `0700` and its files `0600`. Set an encryption key to also
+encrypt entry contents at rest:
 
 ```sh
-claude mcp add echocache -- npx tsx /path/to/echocache/src/index.ts
+export ECHOCACHE_ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
 ```
+
+Turning encryption on or off requires a fresh database — there is no in-place migration, and a
+key/database mismatch is refused at startup rather than failing on some later read.
 
 ## Tools
 
@@ -122,5 +159,21 @@ claude mcp add echocache -- npx tsx /path/to/echocache/src/index.ts
 | `cache_invalidate`  | Delete an entry, optionally cascading to its dependents                  |
 | `cache_stats`       | Exact-match hit rate, `queryHits`/`queryMisses`, and tokens served       |
 
-Data persists to SQLite at `$ECHOCACHE_DB_PATH` (default `~/.echocache/cache.db`), shared
-across every project that registers the server.
+One SQLite file backs all of them, shared across every project that registers the server — a
+conclusion reached in one repo is queryable from another. Concurrent readers and writers from
+separate processes are the expected case, not an edge case.
+
+## Developing
+
+```sh
+git clone https://github.com/kskurtveit/echocache && cd echocache
+npm install
+npm run check        # typecheck + tests
+npm start            # or: npm run dev
+```
+
+See [`CLAUDE.md`](./CLAUDE.md) for architecture and the module reference.
+
+## License
+
+MIT
