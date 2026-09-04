@@ -9,7 +9,7 @@ will work.
 ## Before you start
 
 ```sh
-cd /home/skuk/nowhereman     # directory is still named nowhereman; the project is echocache
+cd /home/skuk/echocache
 git pull
 npm run check                # expect: 151 passing, 0 failing
 ```
