@@ -1,9 +1,20 @@
+import { readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import type Database from 'better-sqlite3';
 import { CacheStore } from './store.js';
 import type { Config } from './config.js';
 import { Cipher } from './crypto.js';
+
+/**
+ * The version every host sees, read from package.json rather than repeated here: a literal drifts
+ * silently on the next release, and 0.1.1 shipped reporting 0.1.0 exactly that way. `../` resolves
+ * to the package root from both src/server.ts and dist/server.js, and npm always ships
+ * package.json regardless of the files allowlist.
+ */
+const VERSION = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+).version as string;
 
 type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
 
@@ -43,7 +54,7 @@ export function validateConfig(db: Database.Database, config: Partial<Config> = 
 }
 
 export function createServer(db: Database.Database, config: Partial<Config> = {}): McpServer {
-    const server = new McpServer({ name: 'echocache', version: '0.1.0' });
+    const server = new McpServer({ name: 'echocache', version: VERSION });
     const store = new CacheStore(db, config, cipherFor(config));
 
     server.registerTool(

@@ -1,6 +1,6 @@
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -55,6 +55,14 @@ describe('MCP surface', () => {
             'cache_set',
             'cache_stats'
         ]);
+    });
+
+    test('reports the published package version to the host', async () => {
+        // 0.1.1 went out to npm reporting 0.1.0, from a hardcoded literal no bump could reach.
+        const pkg = JSON.parse(
+            readFileSync(new URL('../package.json', import.meta.url), 'utf8')
+        ) as { version: string };
+        assert.equal(client.getServerVersion()?.version, pkg.version);
     });
 
     test('every tool carries a description the model can route on', async () => {
