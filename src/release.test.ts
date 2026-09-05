@@ -16,6 +16,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (name: string): Record<string, any> => JSON.parse(readFileSync(join(root, name), 'utf8'));
 const pkg = read('package.json');
 const server = read('server.json');
+const glama = read('glama.json');
 
 describe('release manifests', () => {
     test('the registry server name matches package.json mcpName', () => {
@@ -49,6 +50,17 @@ describe('release manifests', () => {
     test('the repository url is the same repo in both manifests', () => {
         const fromPkg = pkg.repository.url.replace(/^git\+/, '').replace(/\.git$/, '');
         assert.equal(server.repository.url, fromPkg);
+    });
+
+    test('glama.json names the repo owner as a maintainer', () => {
+        // Glama's directory reads this to know who may administer the listing; without it the
+        // profile is scored incomplete. The owner comes from mcpName so it cannot drift from the
+        // namespace GitHub auth actually proves.
+        const owner = pkg.mcpName.split('/')[0].replace(/^io\.github\./, '');
+        assert.ok(
+            glama.maintainers.includes(owner),
+            `glama.json maintainers ${JSON.stringify(glama.maintainers)} does not include ${owner}`
+        );
     });
 
     test('the package is publishable rather than marked private', () => {
