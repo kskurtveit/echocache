@@ -1,6 +1,6 @@
 {
   "name": "echocache",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "An MCP caching server: exact-match response cache with HTTP-style freshness semantics, plus a lightweight knowledge graph for semantic recall of related cached results.",
   "license": "MIT",
   "author": "Kristian Skurtveit",
