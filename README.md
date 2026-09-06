@@ -120,6 +120,22 @@ claude mcp add echocache -- npx -y echocache
 }
 ```
 
+**OpenCode** — add an entry to `opencode.jsonc` (global: `~/.config/opencode/opencode.jsonc`, or
+project-level in the repo root):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "echocache": {
+      "type": "local",
+      "command": ["npx", "-y", "echocache"],
+      "enabled": true
+    }
+  }
+}
+```
+
 Any other MCP-capable host takes the same launch command; only the config file differs. Then point
 your agent at [`AGENTS.md`](./AGENTS.md) so it knows *when* to reach for the cache — the protocol
 matters more than the wiring, since caching the wrong things costs tokens rather than saving them.
