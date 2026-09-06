@@ -140,6 +140,11 @@ Any other MCP-capable host takes the same launch command; only the config file d
 your agent at [`AGENTS.md`](./AGENTS.md) so it knows *when* to reach for the cache — the protocol
 matters more than the wiring, since caching the wrong things costs tokens rather than saving them.
 
+This repo also ships the usage protocol as skills, discovered automatically by hosts that support
+project skills: [`.claude/skills/`](./.claude/skills/) for Claude Code, [`.opencode/skills/`](./.opencode/skills/)
+for OpenCode (`echocache-cache`, `echocache-deps`, `echocache-gain`). No extra setup beyond
+registering the MCP server above — the skill directory is discovered from the project root.
+
 ### Configuration
 
 Every setting is an environment variable, all optional:

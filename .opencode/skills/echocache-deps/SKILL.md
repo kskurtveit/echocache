@@ -1,0 +1,75 @@
+---
+name: echocache-deps
+description: Check a library API or upgrade a dependency in the echocache repo — which packages it depends on, where each one's real type surface lives, and the verification steps that caught actual bugs here. Use before writing or changing code that calls @modelcontextprotocol/server, better-sqlite3, zod, or a Node built-in, and before adopting an API that documentation calls current. Complements the context7-mcp skill: that one fetches docs, this one says what to do with them in this repo.
+---
+
+# Checking a dependency API in echocache
+
+Fetch current docs (e.g. via a context7-style tool) before assuming training data is up to date.
+This skill covers what the docs alone won't tell you here.
+
+## The dependencies
+
+| package | range | purpose | real type surface |
+|---|---|---|---|
+| `@modelcontextprotocol/server` | `^2.0.0` | MCP server, tool registration, stdio transport | `node_modules/@modelcontextprotocol/server/dist/index.d.mts`, and `dist/stdio.d.mts` for the `./stdio` subpath |
+| `better-sqlite3` | `^12.11.1` | the SQLite store | `node_modules/@types/better-sqlite3/index.d.ts` (separate `@types` package) |
+| `zod` | `^4.5.4` | tool input schemas | `node_modules/zod/index.d.cts`; **imported as `zod/v4`** in `server.ts`, so check the `./v4` export, not the root |
+| `typescript`, `tsx`, `@types/node` | dev | build, test runner, Node types | — |
+
+`@modelcontextprotocol/client` is a **devDependency**, used only by `server.test.ts` to drive the real
+server through a real client. Don't import it from `src/` outside tests.
+
+## Four checks that caught real bugs
+
+**1. Read the installed `.d.ts`, not just the docs.** Docs describe a library in general; the
+version actually installed is what your code compiles against, and the two drift. `serveStdio`
+returning a handle with `close()`, and accepting an `onerror` option, were both confirmed by
+reading `dist/stdio.d.mts` — the code had been ignoring both. Caret ranges mean installed versions
+already run ahead of what `package.json` declares, so "what the docs say about v4" and "what's in
+`node_modules`" are different questions.
+
+**2. Check `engines` before adopting anything documentation calls current.** This project supports
+**Node >= 20** and CI runs the suite on **20 and 22** (`.github/workflows/ci.yml`). Node's own docs
+present `import.meta.main` as the current idiom for entry-point detection — it shipped in **24.2.0**,
+so using it would have broken the stated support floor while passing locally. Verify the version a
+feature landed in, then check it against `engines.node`, not against whatever Node you happen to be
+running.
+
+**3. Reproduce the failure before fixing, and mutate after.** Every finding worth acting on here has
+been reproducible in isolation — a throwaway script run through your runtime. Two review findings
+turned out to be non-issues under this repo's real call paths, and two "fixes" passed their own new
+tests while testing nothing, because an unrelated query failed first for the same reason. After a
+fix goes green, break it deliberately and confirm the test catches it.
+
+**4. A caret range's "latest" isn't always the target.** A package manager reporting a newer major
+is not itself a reason to take it. `better-sqlite3` moved `^11` → `^12` specifically to pick up a
+Node 24 prebuild (`^11` had none, so installs on Node 24 fell through to a compiler-dependent
+source build and failed on compiler-less images — see commit `994952b`). `^13` was deliberately
+skipped: it requires Node `>=22`, which would silently drop the Node 20 floor `engines.node` and
+the CI matrix (`.github/workflows/ci.yml`, Node 20 + 22) both assert. Check what floor a candidate
+major actually requires against `engines.node` before bumping — the same check as #2 above, applied
+to a dependency's own `engines` field instead of a language feature's ship version.
+
+## Local gotchas
+
+- **A registered MCP server keeps running the code it started with.** After changing `src/`, an
+  already-registered `echocache` serves the old build until the host restarts. This bites harder if
+  `opencode.jsonc`'s `mcp.echocache` entry points at the published package (`npx -y echocache`, as
+  in this repo's README) rather than local source — that variant won't see `src/` changes at all
+  until a new version is published. For local dependency/API testing, point the entry at local
+  source the same way the Claude Code registration does (`tsx src/index.ts`), and still restart
+  OpenCode after each change. See `CLAUDE.md` for the full note.
+- **`createServer`'s factory is re-invoked per connection/request**, so a throw during server
+  *construction* lands outside `guard()` and surfaces as a raw transport error rather than a clean
+  `isError`. Keep construction cheap and unlikely to fail; see the note in `CLAUDE.md`.
+- **Check scope before adding a second local `context7` entry.** If `context7` is already
+  registered at a global/user config scope, adding a duplicate project-level entry can shadow the
+  authenticated one and end up running unauthenticated instead.
+
+## After changing a dependency
+
+`npm run check` (typecheck + the full test suite) must pass, and `npm run build` must still emit a runnable
+`dist/index.js`. `npm audit` should stay clean. If the change touches the stored schema or the
+embedding format, see the migration notes in `CLAUDE.md` — the embedding format is versioned and
+migrates on open; table columns are not.
