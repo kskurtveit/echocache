@@ -8,6 +8,7 @@
   "mcpName": "io.github.kskurtveit/echocache",
   "keywords": [
     "mcp",
+    "mcp-server",
     "model-context-protocol",
     "cache",
     "llm",

@@ -1,4 +1,4 @@
-# echocache
+# echocache — MCP server for cached LLM responses
 
 An MCP server for a **cached LLM response** — the way an HTTP cache caches an expensive server
 response, not the way a browser caches a static asset. Ask a question you already answered once,
