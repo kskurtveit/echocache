@@ -184,6 +184,12 @@ derivations from untouched sources alone. `src/niche.test.ts` pins this behaviou
 When unsure, prefer under-caching: a missed opportunity costs little, while a wrongly-served stale
 result costs correctness.
 
+**Size limit.** `cache_set` refuses a response larger than the cache's whole byte ceiling
+(`ECHOCACHE_MAX_BYTES`) and returns an error saying so. That refusal is not a transient failure and
+retrying it verbatim will not help: it means the entry could never have been retained, and storing
+it would have evicted everything else in a cache shared across every project. Cache a shorter
+distillation — the conclusion rather than the material it came from, which is what pays anyway.
+
 Replaying real Claude Code session logs through this cache showed both halves of this. Literal
 repeat shell commands were mostly `git status` / `git push` — redundant to run again but actively
 wrong to cache. Read-only file lookups were safe to reuse and landed a ~13% hit rate on unchanged

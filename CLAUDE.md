@@ -70,7 +70,7 @@ the two can't disagree on what counts as expired. Types: `NodeRow`, `CacheEntry`
 | Method | Purpose |
 |---|---|
 | `get(model, prompt, params?)` | Exact-match lookup; counts hits/misses and `tokens_served` |
-| `set(opts)` | Insert or replace, link into the graph, enforce limits; returns `{ id, linkedTo, evicted }` |
+| `set(opts)` | Insert or replace, link into the graph, enforce limits; returns `{ id, linkedTo, evicted }`. Throws if the sealed response alone exceeds `maxBytes` |
 | `query(text, opts?)` | Semantic search; floor defaults to `DEFAULT_QUERY_FLOOR` (0.3). Records access on every match — a recall is a use, and an entry reachable only by meaning would otherwise look untouched to LRU |
 | `related(id, opts?)` | BFS over edges, optionally filtered to one relation |
 | `invalidate(id, opts?)` | Delete, optionally cascading through `derived-from` dependents |
@@ -136,6 +136,14 @@ reusable regardless of which project asked for it.
 **Eviction** runs on every write (`enforceLimits()`): fully-expired entries are dropped first,
 then least-recently-used entries until both ceilings are satisfied. Entries with `ttl_seconds:
 null` never expire but are still subject to the LRU ceilings.
+
+A write whose stored response alone exceeds `ECHOCACHE_MAX_BYTES` is **refused before the write**
+rather than admitted and then swept: admitting it would evict every other entry and still fail to
+retain this one, so a single careless `cache_set` from any project would wipe a cache that is
+shared across all of them by design. The check weighs the *sealed* string, since that is what
+`enforceLimits()`'s `SUM(LENGTH(response))` measures once encryption is on. Pinned by
+`store.test.ts`'s "refuses a response bigger than the byte ceiling instead of evicting the whole
+cache".
 
 **Concurrency:** the cache is designed to be shared across every project that registers the
 server, so concurrent readers and writers from separate processes are the normal case, not an edge

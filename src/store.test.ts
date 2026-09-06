@@ -445,6 +445,25 @@ describe('eviction', () => {
         assert.ok(store.stats().entries > 0, 'should not have evicted everything');
     });
 
+    test('refuses a response bigger than the byte ceiling instead of evicting the whole cache', () => {
+        // The byte pass evicts least-recently-used until the total fits, so a response larger than
+        // the ceiling on its own used to delete every other entry and then itself — a single
+        // careless write wiping a cache shared across every project that registers the server.
+        const store = new CacheStore(db, { maxEntries: 1000, maxBytes: 2000 });
+        for (let i = 0; i < 5; i++) {
+            store.set({ model: 'm', prompt: `keeper ${i}`, response: 'x'.repeat(300), ttlSeconds: null });
+        }
+        assert.equal(store.stats().entries, 5);
+
+        assert.throws(
+            () => store.set({ model: 'm', prompt: 'far too big', response: 'y'.repeat(5000), ttlSeconds: null }),
+            /ECHOCACHE_MAX_BYTES/,
+            'an unretainable write should fail loudly, not silently take the cache with it'
+        );
+        assert.equal(store.stats().entries, 5, 'existing entries must survive an oversized write');
+        assert.ok(store.get('m', 'keeper 0'), 'the least-recently-used entry must still be there');
+    });
+
     test('sweeps fully-expired entries regardless of the ceilings', () => {
         const store = new CacheStore(db, { maxEntries: 1000 });
         const { id } = store.set({ model: 'm', prompt: 'perishable', response: 'x', ttlSeconds: 1 });

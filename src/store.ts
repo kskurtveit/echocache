@@ -328,6 +328,27 @@ export class CacheStore {
         const embedding = embed(`${opts.prompt}\n${opts.response}`);
         const estTokens = estimateTokens(opts.response);
 
+        // Sealed once here rather than inside the transaction: encryption is what the byte
+        // ceiling actually measures (enforceLimits sums LENGTH(response) over the stored column,
+        // which is base64 ciphertext when a key is set), so the check below has to weigh the same
+        // string that gets written.
+        const sealedPrompt = this.seal(opts.prompt);
+        const sealedResponse = this.seal(opts.response);
+
+        // An entry larger than the whole byte ceiling can never be retained: enforceLimits() would
+        // evict least-recently-used entries until the total fit, delete every other entry, and
+        // then delete this one too — one careless write wiping a cache that is shared across every
+        // project by design. Refuse it instead, so the caller gets a clean error and just does the
+        // work itself. (JS string length counts surrogate pairs as two where SQLite's LENGTH counts
+        // one, so this errs toward rejecting a borderline write rather than admitting one.)
+        if (sealedResponse.length > this.config.maxBytes) {
+            throw new Error(
+                `response is ${sealedResponse.length} characters, larger than the whole cache ceiling of ` +
+                    `${this.config.maxBytes} (ECHOCACHE_MAX_BYTES). Storing it would evict every other entry ` +
+                    'and still not retain this one. Cache a shorter summary, or raise ECHOCACHE_MAX_BYTES.'
+            );
+        }
+
         // The retire-then-write sequence below has to run as one unit with respect to another
         // connection doing the same thing to the same key_hash — the cache is shared across every
         // project that registers this server, so that's a real scenario, not a hypothetical, and
@@ -366,8 +387,8 @@ export class CacheStore {
                     candidateId,
                     keyHash,
                     opts.model,
-                    this.seal(opts.prompt),
-                    this.seal(opts.response),
+                    sealedPrompt,
+                    sealedResponse,
                     JSON.stringify(params),
                     JSON.stringify(opts.tags ?? []),
                     toBuffer(embedding),

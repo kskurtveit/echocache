@@ -131,7 +131,13 @@ opportunity costs little, a stale hit costs correctness.
 A cache tool can fail (`isError: true`) — for example if the database is unreadable or the
 configured encryption key doesn't match it. Treat that as a plain cache miss: **do the real work
 and continue**. Never retry the same cache call in a loop, and never present the error text as if
-it were the cached result. If every cache call in a session is failing, say so once rather than
+it were the cached result.
+
+One failure has a specific fix rather than a fallback: a `cache_set` refused because the response
+exceeds the cache's whole byte ceiling (`ECHOCACHE_MAX_BYTES`). Retrying it unchanged will always
+fail — the entry could never be retained, and admitting it would evict every other project's
+entries from a shared cache. Write a shorter distillation instead: the conclusion, not the material
+it was drawn from. That is the entry worth storing in the first place. If every cache call in a session is failing, say so once rather than
 silently working around it — the fix is usually a configuration problem the user needs to know
 about.
 
