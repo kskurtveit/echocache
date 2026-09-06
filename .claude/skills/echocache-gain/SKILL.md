@@ -43,3 +43,14 @@ at the `echocache-cache` skill's "what NOT to route through this cache".
 
 If `cache_stats` itself returns `isError: true`, report that the cache is unreachable and quote
 the message — do not substitute zeros, which would read as "the cache is working but empty."
+
+## Attributing savings to one task, not the cache's whole history
+
+`tokensServed` is a running total since the cache was created — it is *not* what the current task
+saved. To report the latter, call `cache_stats` once before the task's cache lookups and once after,
+and report the delta, not the raw total. A delta also tells you what actually replaced repo-reading
+work: check whether the sources recalled (`cache_query` matches, `cache_related` traversal) exist
+anywhere in the repo's own files or git history. If they don't — a synthesized research conclusion,
+a cross-session measurement — the delta is a real savings, not just relocated cost. If a fact is
+also cheaply recoverable another way (e.g. sitting in a single commit message), say so rather than
+crediting the cache with the whole gap.

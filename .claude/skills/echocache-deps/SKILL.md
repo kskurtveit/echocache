@@ -12,8 +12,8 @@ Use `context7-mcp` to fetch the docs. This skill covers what the docs alone won'
 | package | range | purpose | real type surface |
 |---|---|---|---|
 | `@modelcontextprotocol/server` | `^2.0.0` | MCP server, tool registration, stdio transport | `node_modules/@modelcontextprotocol/server/dist/index.d.mts`, and `dist/stdio.d.mts` for the `./stdio` subpath |
-| `better-sqlite3` | `^11.9.1` | the SQLite store | `node_modules/@types/better-sqlite3/index.d.ts` (separate `@types` package) |
-| `zod` | `^4.0.0` | tool input schemas | `node_modules/zod/index.d.cts`; **imported as `zod/v4`** in `server.ts`, so check the `./v4` export, not the root |
+| `better-sqlite3` | `^12.11.1` | the SQLite store | `node_modules/@types/better-sqlite3/index.d.ts` (separate `@types` package) |
+| `zod` | `^4.5.4` | tool input schemas | `node_modules/zod/index.d.cts`; **imported as `zod/v4`** in `server.ts`, so check the `./v4` export, not the root |
 | `typescript`, `tsx`, `@types/node` | dev | build, test runner, Node types | — |
 
 `@modelcontextprotocol/client` is a **devDependency**, used only by `server.test.ts` to drive the real
@@ -41,6 +41,15 @@ been reproducible in isolation — a throwaway `npx tsx -e` or a scratch script.
 turned out to be non-issues under this repo's real call paths, and two "fixes" passed their own new
 tests while testing nothing, because an unrelated query failed first for the same reason. After a
 fix goes green, break it deliberately and confirm the test catches it.
+
+**4. A caret range's "latest" isn't always the target.** `npm outdated` reporting a newer major is
+not itself a reason to take it. `better-sqlite3` moved `^11` → `^12` specifically to pick up a
+Node 24 prebuild (`^11` had none, so installs on Node 24 fell through to a compiler-dependent
+source build and failed on compiler-less images — see commit `994952b`). `^13` was deliberately
+skipped: it requires Node `>=22`, which would silently drop the Node 20 floor `engines.node` and
+the CI matrix (`.github/workflows/ci.yml`, Node 20 + 22) both assert. Check what floor a candidate
+major actually requires against `engines.node` before bumping — the same check as #2 above, applied
+to a dependency's own `engines` field instead of a language feature's ship version.
 
 ## Local gotchas
 
