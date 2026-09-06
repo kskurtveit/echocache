@@ -1,6 +1,6 @@
 ---
 name: echocache-cache
-description: Use the echocache MCP cache (cache_get/cache_set/cache_query/cache_related/cache_invalidate) around work that is expensive to PRODUCE and safe to reuse — a cached LLM response for a long generation, a multi-step research or reasoning chain, a derived analysis or judgment call, an expensive API result — so it need not be regenerated later. Trigger before starting such work, and after producing a result worth keeping. Do NOT trigger for plain file reads, greps or globs, or for locating code: those cost the same or more from cache than from doing the work directly. Do NOT trigger for stateful or live-state checks (git status, test runs, health checks, git push) or anything with side effects.
+description: Use the echocache MCP cache (cache_get/cache_set/cache_query/cache_related/cache_invalidate) around work that is expensive to PRODUCE and safe to reuse — a cached LLM response for a long generation, a multi-step research or reasoning chain, a derived analysis or judgment call, an expensive API result — so it need not be regenerated later. Trigger the moment you're about to make a SECOND tool call chasing the same open question (a second search, log pull, or hypothesis test) — check the cache before continuing, not after you've already solved it. Trigger again the instant you're about to STATE a root cause, conclusion, or recommendation — that statement is the response to cache; write it before or as you send it, never "later." Debugging counts as a reasoning chain; it does not have to look like research to qualify. Do NOT trigger for plain file reads, greps or globs, or for locating code: those cost the same or more from cache than from doing the work directly. Do NOT trigger for stateful or live-state checks (git status, test runs, health checks, git push) or anything with side effects.
 ---
 
 # echocache cache protocol
@@ -34,6 +34,23 @@ the future already wins big, so low expected reuse does not disqualify it.
 reason something is the way it is. A synthesis across several sources that took real reasoning to
 produce. The fact that something is *absent*, once you've checked. Never a location: if a search
 tool can find it, the cache costs more to consult than the search does, and loses.
+
+## Trigger checkpoints — the moments this actually gets missed
+
+Measured, not assumed: a scan of every session since this cache was registered (2026-08-29) found
+**zero** spontaneous `cache_get`/`cache_query` calls before expensive work, in any session — every
+real invocation happened only because a human typed an explicit instruction to use the cache, in
+the same session that later solved a genuinely cacheable problem (a root-cause debugging chain)
+without ever checking first or writing the conclusion back unprompted. The trigger category was
+right; the trigger *moment* was too abstract to catch in practice. These are the specific
+rationalizations that let it slip, past tense because they already happened once:
+
+| Thought | Reality |
+|---|---|
+| "I'm mid-debugging, I'll cache the conclusion after" | After is where it was skipped, twice, in the session that prompted this table. Cache at the moment you state the conclusion, not on a later pass. |
+| "This is just debugging, not research" | Debugging a root cause across several tool calls is exactly the multi-step reasoning chain this cache exists for. It does not need to look like a literature search to qualify. |
+| "I already have a strong guess, checking first feels redundant" | A guess is not a check. You cannot know it was already answered until `cache_query` says so — and a hit is free compared to confirming the guess yourself. |
+| "Nobody asked me to use the cache" | Nothing in this skill says wait to be asked. Being asked every time is the exact failure this table exists to close. |
 
 ## Before doing expensive, reusable work
 
