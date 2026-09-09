@@ -7,8 +7,11 @@ export interface Config {
     maxEntries: number;
     /** Hard ceiling on total retained response bytes. */
     maxBytes: number;
-    /** Default freshness lifetime when a caller doesn't specify one. */
-    defaultTtlSeconds: number;
+    /**
+     * Default freshness lifetime when a caller doesn't specify one. `null` — the default — means
+     * entries never expire, and are bounded only by the LRU ceilings above.
+     */
+    defaultTtlSeconds: number | null;
     /** Cosine-similarity floor for auto-linking a new entry to existing ones. */
     similarityThreshold: number;
     /** How many recent entries a new write is compared against when auto-linking. */
@@ -30,6 +33,20 @@ function intFromEnv(name: string, fallback: number, min = 0): number {
     return Math.floor(parsed);
 }
 
+/**
+ * Like intFromEnv, but unset means `null` — no expiry — rather than a numeric fallback. Kept
+ * separate so the "no value" case stays a distinct type rather than a sentinel number.
+ */
+function nullableIntFromEnv(name: string, min = 0): number | null {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === '') return null;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < min) {
+        throw new Error(`${name} must be a number of at least ${min}, got: ${raw}`);
+    }
+    return Math.floor(parsed);
+}
+
 function floatFromEnv(name: string, fallback: number, min: number, max: number): number {
     const raw = process.env[name];
     if (raw === undefined || raw.trim() === '') return fallback;
@@ -45,7 +62,7 @@ export function loadConfig(): Config {
         dbPath: process.env.ECHOCACHE_DB_PATH ?? join(homedir(), '.echocache', 'cache.db'),
         maxEntries: intFromEnv('ECHOCACHE_MAX_ENTRIES', 10_000),
         maxBytes: intFromEnv('ECHOCACHE_MAX_BYTES', 256 * 1024 * 1024),
-        defaultTtlSeconds: intFromEnv('ECHOCACHE_DEFAULT_TTL_SECONDS', 60 * 60 * 24),
+        defaultTtlSeconds: nullableIntFromEnv('ECHOCACHE_DEFAULT_TTL_SECONDS'),
         similarityThreshold: floatFromEnv('ECHOCACHE_SIMILARITY_THRESHOLD', 0.25, 0, 1),
         linkCandidatePool: intFromEnv('ECHOCACHE_LINK_CANDIDATE_POOL', 500, 1),
         encryptionKeyHex: process.env.ECHOCACHE_ENCRYPTION_KEY?.trim() || undefined
@@ -56,7 +73,7 @@ export const DEFAULT_CONFIG: Config = {
     dbPath: join(homedir(), '.echocache', 'cache.db'),
     maxEntries: 10_000,
     maxBytes: 256 * 1024 * 1024,
-    defaultTtlSeconds: 60 * 60 * 24,
+    defaultTtlSeconds: null,
     similarityThreshold: 0.25,
     linkCandidatePool: 500,
     encryptionKeyHex: undefined

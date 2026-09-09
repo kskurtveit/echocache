@@ -125,7 +125,7 @@ All settings are environment variables, read once at startup by `loadConfig()`:
 | `ECHOCACHE_DB_PATH` | `~/.echocache/cache.db` | SQLite file location |
 | `ECHOCACHE_MAX_ENTRIES` | `10000` | LRU ceiling on retained entries |
 | `ECHOCACHE_MAX_BYTES` | `268435456` (256MB) | LRU ceiling on retained response bytes |
-| `ECHOCACHE_DEFAULT_TTL_SECONDS` | `86400` (1 day) | Freshness lifetime when a caller omits one |
+| `ECHOCACHE_DEFAULT_TTL_SECONDS` | unset (never expires) | Freshness lifetime when a caller omits one; entries are still bounded by the LRU ceilings |
 | `ECHOCACHE_SIMILARITY_THRESHOLD` | `0.25` | Similarity floor for auto-linking a `similar` edge |
 | `ECHOCACHE_LINK_CANDIDATE_POOL` | `500` | Recent entries a new write is compared against |
 | `ECHOCACHE_ENCRYPTION_KEY` | unset | 64 hex chars (32 bytes); enables at-rest encryption |
@@ -136,6 +136,17 @@ reusable regardless of which project asked for it.
 **Eviction** runs on every write (`enforceLimits()`): fully-expired entries are dropped first,
 then least-recently-used entries until both ceilings are satisfied. Entries with `ttl_seconds:
 null` never expire but are still subject to the LRU ceilings.
+
+**The default TTL is `null` (never expires), deliberately.** It was `86400` (1 day), and dogfooding
+showed that default working directly against the product's purpose: a session's derived conclusions
+— a security review, a design note, a resolved open question — were written without an explicit
+`ttl_seconds`, silently picked up the 1-day default, and were swept three days later. The entries
+that survived were the ones whose authors happened to pass an explicit TTL. Since `AGENTS.md`
+already tells callers that anything reporting *current state* does not belong in this cache at all,
+a clock-based default optimised for the one case the product tells you to skip. Expiry is now
+opt-in for genuinely time-sensitive entries; everything else is bounded by the LRU ceilings, which
+is the right pressure for a cache of conclusions. Pinned by `store.test.ts`'s "an entry written
+without a TTL is still there days later".
 
 A write whose stored response alone exceeds `ECHOCACHE_MAX_BYTES` is **refused before the write**
 rather than admitted and then swept: admitting it would evict every other entry and still fail to

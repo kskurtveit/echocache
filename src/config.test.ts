@@ -24,6 +24,26 @@ describe('config', () => {
         assert.ok(config.dbPath.endsWith('cache.db'));
     });
 
+    test('defaults to no expiry, since the entries this cache exists for do not go stale', () => {
+        // A 1-day default silently expired derived conclusions — research findings, root-cause
+        // post-mortems — which are exactly what this cache is for and never go stale in a day.
+        // Anything genuinely time-sensitive is documented as not belonging here at all, so the
+        // old default optimised for the one case AGENTS.md tells callers to skip. The LRU
+        // ceilings still bound the cache; nothing grows without limit.
+        assert.equal(loadConfig().defaultTtlSeconds, null);
+        assert.equal(DEFAULT_CONFIG.defaultTtlSeconds, null);
+    });
+
+    test('still honours an explicit default TTL from the environment', () => {
+        process.env.ECHOCACHE_DEFAULT_TTL_SECONDS = '3600';
+        assert.equal(loadConfig().defaultTtlSeconds, 3600);
+    });
+
+    test('accepts an explicit zero default TTL, meaning immediately stale', () => {
+        process.env.ECHOCACHE_DEFAULT_TTL_SECONDS = '0';
+        assert.equal(loadConfig().defaultTtlSeconds, 0);
+    });
+
     test('reads overrides from the environment', () => {
         process.env.ECHOCACHE_MAX_ENTRIES = '42';
         process.env.ECHOCACHE_SIMILARITY_THRESHOLD = '0.5';

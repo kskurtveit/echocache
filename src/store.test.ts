@@ -464,6 +464,17 @@ describe('eviction', () => {
         assert.ok(store.get('m', 'keeper 0'), 'the least-recently-used entry must still be there');
     });
 
+    test('an entry written without a TTL is still there days later', () => {
+        // Dogfooding found this the expensive way: a session's conclusions were written without
+        // ttl_seconds, picked up the old 1-day default, and were swept three days later — the
+        // durable derivations this cache exists to keep, deleted by its own default.
+        const store = new CacheStore(db, { maxEntries: 1000 });
+        const { id } = store.set({ model: 'research', prompt: 'a conclusion worth keeping', response: 'x' });
+        db.prepare('UPDATE nodes SET created_at = ? WHERE id = ?').run(Date.now() - 30 * 86_400_000, id);
+        assert.equal(store.enforceLimits(), 0, 'a TTL-less entry must never be swept as expired');
+        assert.ok(store.get('research', 'a conclusion worth keeping'), 'and must still be readable');
+    });
+
     test('sweeps fully-expired entries regardless of the ceilings', () => {
         const store = new CacheStore(db, { maxEntries: 1000 });
         const { id } = store.set({ model: 'm', prompt: 'perishable', response: 'x', ttlSeconds: 1 });

@@ -104,7 +104,11 @@ export function createServer(db: Database.Database, config: Partial<Config> = {}
                     .nonnegative()
                     .nullable()
                     .optional()
-                    .describe('Freshness lifetime in seconds. null = never expires. Default: 1 day'),
+                    .describe(
+                        'Freshness lifetime in seconds. null = never expires, which is the default — ' +
+                            'derived conclusions do not go stale on a clock. Pass a short TTL only for ' +
+                            'something genuinely time-sensitive.'
+                    ),
                 stale_while_revalidate_seconds: z
                     .number()
                     .int()
