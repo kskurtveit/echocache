@@ -167,6 +167,31 @@ and more specific:
   of reasoning to produce and is short to state is the ideal case. An entry that merely restates
   where code lives is the worst.
 
+### Labelling entries by kind: the `model` field
+
+`model` was documented as the model or tool a response came from, and that is still right when you
+cached an actual model call. But most entries worth caching were produced by *your own reasoning*,
+not by a separate model call, and in practice the field became the cache's **category label**. Every
+entry in the reference cache uses it that way; none holds a model name.
+
+Reuse an established label rather than coining a near-synonym — consistency is what makes the field
+useful later:
+
+| label | what it holds |
+|---|---|
+| `debug-conclusion` | a root cause found, or a question resolved, after a real investigation |
+| `research` | a finding synthesised from external sources, with the sources named |
+| `measurement` | a number you actually measured, with the method that produced it |
+| `orient` | what you concluded about how a codebase or system fits together |
+| `design-note` | a direction or decision recorded — including one deliberately left open |
+| `security-review` | the result of a vetting pass |
+| `source-fingerprint` | a file hash for cascade invalidation (see below), never file contents |
+
+This is a **convention, not enforcement**: nothing validates the value, and no retention policy keys
+off it yet. It is recorded now because labels have to already be in the data before any future
+policy — retention, eviction priority, filtering by kind — could use them, and entries cannot be
+categorised retroactively once the session that wrote them is gone.
+
 ### Keeping a derivation honest about its sources
 
 A derivation goes wrong when its source changes underneath it, and a TTL cannot detect that. Record

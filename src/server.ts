@@ -68,7 +68,15 @@ export function createServer(db: Database.Database, config: Partial<Config> = {}
                 'use it as-is; stale means it is past its TTL but within its stale-while-revalidate window, so ' +
                 'you may still use it but consider refreshing it.',
             inputSchema: z.object({
-                model: z.string().describe('Model/tool identifier the response came from, e.g. "claude-sonnet-5"'),
+                model: z
+                    .string()
+                    .describe(
+                        'What produced this response. Either a real model/tool identifier when you cached an ' +
+                            'actual model call ("claude-sonnet-5"), or the kind of work that produced it when ' +
+                            'the producer was your own reasoning ("research", "debug-conclusion", ' +
+                            '"measurement", "orient", "source-fingerprint"). Reuse an existing label rather ' +
+                            'than coining a near-synonym — it is the cache\'s de-facto category field.'
+                    ),
                 prompt: z.string().describe('The exact prompt or request text'),
                 params: z
                     .record(z.string(), z.unknown())
@@ -94,7 +102,14 @@ export function createServer(db: Database.Database, config: Partial<Config> = {}
                 'was built from other cached entries — invalidating a parent with cascade can then clean up ' +
                 'anything derived from it.',
             inputSchema: z.object({
-                model: z.string(),
+                model: z
+                    .string()
+                    .describe(
+                        'What produced this response — a model/tool identifier for a cached model call, or ' +
+                            'the kind of work behind it ("research", "debug-conclusion", "measurement", ' +
+                            '"design-note", "orient", "source-fingerprint"). Reuse an existing label instead ' +
+                            'of coining a near-synonym; this is what groups entries by kind.'
+                    ),
                 prompt: z.string(),
                 response: z.string().describe('The response text to cache'),
                 params: z.record(z.string(), z.unknown()).optional(),

@@ -54,9 +54,23 @@ rationalizations that let it slip, past tense because they already happened once
 
 ## Before doing expensive, reusable work
 
-Call `cache_get(model, prompt, params)` first, where `model` names the operation that produced the
-result (`"summarize"`, `"analyze-schema"`, `"claude-opus-5"`, ...) and `prompt` is the normalized
-description of what was asked.
+Call `cache_get(model, prompt, params)` first, where `prompt` is the normalized description of what
+was asked and `model` names what produced the result.
+
+**`model` is the cache's de-facto category field.** It holds a real model identifier when you cached
+an actual model call (`"claude-opus-5"`), but most entries worth caching came from your own
+reasoning, and for those it names the *kind of work*. Reuse an established label rather than coining
+a near-synonym — every entry in the reference cache uses one of these:
+
+`debug-conclusion` (a root cause or resolved question) · `research` (a finding synthesised from
+external sources) · `measurement` (a number you measured, with its method) · `orient` (how a
+codebase or system fits together) · `design-note` (a direction or decision, including one left
+open) · `security-review` (a vetting pass) · `source-fingerprint` (a file hash for cascade
+invalidation)
+
+Nothing validates the value and no retention policy keys off it yet. Consistency matters anyway:
+labels have to be in the data before any future policy could use them, and entries can't be
+categorised retroactively once the session that wrote them is gone.
 
 - `hit: true, entry.fresh: true` → use `entry.response`, skip the real work.
 - `hit: true, entry.stale: true` → usable but past TTL; use it if adequate or refresh it.

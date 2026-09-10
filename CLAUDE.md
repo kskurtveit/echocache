@@ -281,6 +281,17 @@ Any other MCP-capable host takes the same launch command; only the config file d
   file read costs the caller exactly what re-reading would, so it saves nothing. The stat was
   called `estimatedTokensSaved` and vouched for a usage pattern that loses tokens. Don't
   reintroduce a savings figure unless callers declare production cost at `cache_set` time.
+- **`model` is the de-facto category field, by convention only.** It was specified as the model or
+  tool a response came from, but in practice every real entry uses it to name the *kind of work*
+  that produced the response — `debug-conclusion`, `research`, `measurement`, `orient`,
+  `design-note`, `security-review`, `source-fingerprint`. The established labels are listed in
+  `AGENTS.md` and both `echocache-cache` skills. Nothing validates the value and no retention
+  policy keys off it: the convention is recorded because labels must already be in the data before
+  any future policy (retention, eviction priority, filtering by kind) could use them, and entries
+  cannot be categorised retroactively. Don't add validation or a fixed enum for it — a caller
+  caching a genuine model call still legitimately puts a model name there, and eviction pressure
+  is currently 0.19% of the entry ceiling, so a policy would be solving a problem that has not
+  happened.
 - Never `SELECT *` from `nodes` in a hot path — `response` bodies dominate row size, so scoring
   and scanning queries select `id, embedding` and fetch full rows only for the winners.
 - Commits written with AI assistance carry an `Assisted-by: Claude Code (<model>)` trailer, not
