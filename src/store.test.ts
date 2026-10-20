@@ -84,6 +84,22 @@ describe('get/set round trip', () => {
         assert.equal(store.get('m', 'p')?.response, 'v2');
     });
 
+    test('refuses a derived_from parent that no longer exists, and writes nothing', () => {
+        const store = newStore();
+        const parent = store.set({ model: 'm', prompt: 'source', response: 'x' });
+        store.invalidate(parent.id);
+        const before = store.stats();
+
+        assert.throws(
+            () => store.set({ model: 'm', prompt: 'child', response: 'y', derivedFrom: [parent.id] }),
+            err => err instanceof Error && err.message.includes(parent.id) && /nothing was written/i.test(err.message)
+        );
+
+        const after = store.stats();
+        assert.equal(after.entries, before.entries, 'the child was stored despite the error');
+        assert.equal(store.get('m', 'child'), null);
+    });
+
     test('re-setting an existing key still records newly declared derived_from parents', () => {
         const store = newStore();
         const parent = store.set({ model: 'm', prompt: 'source', response: 'x' });

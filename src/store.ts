@@ -358,7 +358,22 @@ export class CacheStore {
         // even runs, so a second connection's set() on the same key genuinely waits rather than
         // interleaving. db.ts sets a busy_timeout so that wait is transparent rather than an
         // immediate SQLITE_BUSY error.
+        const parents = [...new Set(opts.derivedFrom ?? [])];
         const writeNode = this.db.transaction((): { id: string; wasInsert: boolean } => {
+            // Checked inside the write lock so a parent can't vanish between the check and the edge
+            // insert below. Left to the edges table's foreign key this surfaces as an opaque
+            // "FOREIGN KEY constraint failed" — after the entry itself was already committed.
+            const missing = parents.filter(
+                parentId => !this.db.prepare('SELECT 1 FROM nodes WHERE id = ?').get(parentId)
+            );
+            if (missing.length > 0) {
+                throw new Error(
+                    `derived_from names ${missing.length === 1 ? 'an entry' : 'entries'} that no longer ` +
+                        `exist: ${missing.join(', ')}. ${missing.length === 1 ? 'It was' : 'They were'} ` +
+                        'evicted, expired, or invalidated. Nothing was written; retry without ' +
+                        `${missing.length === 1 ? 'it' : 'them'}, or cache the parent again first.`
+                );
+            }
             const existingEmbedding = this.db
                 .prepare<[string], EmbeddingRow>('SELECT embedding FROM nodes WHERE key_hash = ?')
                 .get(keyHash);
@@ -399,6 +414,10 @@ export class CacheStore {
                     estTokens
                 )!;
             this.addToDocFreq(embedding);
+            const insertParentEdge = this.db.prepare(
+                'INSERT OR REPLACE INTO edges (from_id, to_id, relation, weight) VALUES (?, ?, ?, ?)'
+            );
+            for (const parentId of parents) insertParentEdge.run(written.id, parentId, 'derived-from', 1.0);
             return { id: written.id, wasInsert: written.id === candidateId };
         });
         const { id, wasInsert } = writeNode.immediate();
@@ -431,10 +450,7 @@ export class CacheStore {
                 }
             }
         }
-        for (const parentId of opts.derivedFrom ?? []) {
-            insertEdge.run(id, parentId, 'derived-from', 1.0);
-            linkedTo++;
-        }
+        linkedTo += parents.length;
 
         const evicted = this.enforceLimits();
         return { id, linkedTo, evicted };
