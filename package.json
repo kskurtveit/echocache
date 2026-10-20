@@ -29,6 +29,11 @@
   "types": "./dist/index.d.ts",
   "files": [
     "dist",
+    ".claude/skills/echocache-cache",
+    ".claude/skills/echocache-gain",
+    ".claude/agents/codebase-orienter.md",
+    ".opencode/skills/echocache-cache",
+    ".opencode/skills/echocache-gain",
     "README.md",
     "AGENTS.md",
     "LICENSE"

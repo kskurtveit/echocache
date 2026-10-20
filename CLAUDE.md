@@ -329,7 +329,9 @@ rest — backups, disk images, another user on the box — not a compromised hos
 
 `npm run build` compiles to `dist/` via `tsconfig.build.json` (tests excluded, declarations and
 sourcemaps on) and marks `dist/index.js` executable; the shebang makes it directly runnable. The
-`files` allowlist keeps the tarball to `dist` plus docs — verify with `npm pack --dry-run`.
+`files` allowlist keeps the tarball to `dist`, docs, and the user-facing skills/agent
+(`echocache-cache`, `echocache-gain`, `codebase-orienter`) — verify with `npm pack --dry-run`. The
+repo-development skills (`echocache-deps`, `context7-mcp`) are deliberately left out.
 
 `server.json` at the repo root is the manifest for the official [MCP Server
 Registry](https://modelcontextprotocol.io/registry/quickstart): its `name` must match
